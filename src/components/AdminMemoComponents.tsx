@@ -1,9 +1,16 @@
-import { memo } from 'react';
-import { AlertTriangle, Check, RotateCcw, Trash2 } from 'lucide-react';
+import { memo, useState } from 'react';
 import {
-  BUS_CAPACITY,
+  AlertCircle,
+  AlertTriangle,
+  Check,
+  Loader2,
+  Pencil,
+  RotateCcw,
+  Trash2,
+  X,
+} from 'lucide-react';
+import {
   BUS_LIST,
-  COLOR_GROUP_CAPACITY,
   COLOR_GROUP_LIST,
   LABELS,
   PAYMENT_METHOD_LIST,
@@ -18,6 +25,7 @@ import {
   hasMixedMemberAssignments,
   normalizeArabicText,
   normalizePhoneKey,
+  validateAdminMemberName,
   type CapacityCounts,
   type FinancialStats,
 } from '../utils/validation';
@@ -100,32 +108,40 @@ interface AdminCapacityBoardProps {
 export const AdminCapacityBoard = memo(function AdminCapacityBoard({
   capacities,
 }: AdminCapacityBoardProps) {
+  const totalBusCap = capacities.buses.bus1.limit + capacities.buses.bus2.limit;
+  const totalColorCap =
+    capacities.colors.pink.limit +
+    capacities.colors.black.limit +
+    capacities.colors.yellow.limit +
+    capacities.colors.green.limit;
+
   return (
     <div className="rounded-xl border border-[#E4DDD2] bg-white p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-display text-base font-bold text-[#1E1A16]">
           حالة المقاعد والقروبات (المؤكدين بالدفع فقط)
         </h2>
-        <span className="text-xs text-[#6B6155]">
-          سعة كل باص {BUS_CAPACITY} فرد · سعة كل قروب لوني {COLOR_GROUP_CAPACITY} فرد
+        <span className="text-xs text-[#6B6155] tabular-nums">
+          إجمالي الباصات {totalBusCap} مقعد · إجمالي القروبات {totalColorCap} مقعد
         </span>
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
         {BUS_LIST.map((bus) => {
           const stat = capacities.buses[bus.key];
+          const fillPct = stat.limit > 0 ? Math.min(100, (stat.confirmed / stat.limit) * 100) : 100;
           return (
             <div key={bus.key} className="rounded-lg border border-[#ECE6DC] bg-[#FAF8F4] p-4">
               <div className="flex items-center justify-between text-sm">
                 <strong className="text-[#1E1A16]">{bus.label}</strong>
                 <span
-                  className={`font-mono-num text-xs font-bold ${
+                  className={`font-mono-num text-xs font-bold tabular-nums ${
                     stat.isFull ? 'text-red-700' : 'text-emerald-700'
                   }`}
                 >
                   {stat.isFull
-                    ? `البص اتملا (${stat.confirmed}/${BUS_CAPACITY})`
-                    : `${stat.confirmed} / ${BUS_CAPACITY} مؤكد · متبقي ${stat.remaining}`}
+                    ? `البص اتملا (${stat.confirmed}/${stat.limit})`
+                    : `${stat.confirmed} / ${stat.limit} مؤكد · متبقي ${stat.remaining}`}
                 </span>
               </div>
               <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-[#E6DFD3]">
@@ -133,7 +149,7 @@ export const AdminCapacityBoard = memo(function AdminCapacityBoard({
                   className={`h-full transition-all duration-300 ${
                     stat.isFull ? 'bg-red-600' : 'bg-[#9A5B25]'
                   }`}
-                  style={{ width: `${Math.min(100, (stat.confirmed / BUS_CAPACITY) * 100)}%` }}
+                  style={{ width: `${fillPct}%` }}
                 />
               </div>
               <p className="mt-2 text-xs text-[#6B6155] tabular-nums">
@@ -148,6 +164,7 @@ export const AdminCapacityBoard = memo(function AdminCapacityBoard({
       <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {COLOR_GROUP_LIST.map((group) => {
           const stat = capacities.colors[group.key];
+          const fillPct = stat.limit > 0 ? Math.min(100, (stat.confirmed / stat.limit) * 100) : 100;
           return (
             <div key={group.key} className="rounded-lg border border-[#ECE6DC] bg-[#FAF8F4] p-3.5">
               <div className="flex items-center justify-between gap-1.5 text-xs">
@@ -156,18 +173,18 @@ export const AdminCapacityBoard = memo(function AdminCapacityBoard({
                   <span>قروب {LABELS.colors[group.key]}</span>
                 </span>
                 <span
-                  className={`font-mono-num font-bold ${
+                  className={`font-mono-num font-bold tabular-nums ${
                     stat.isFull ? 'text-red-700' : 'text-[#4E463D]'
                   }`}
                 >
-                  {stat.isFull ? 'القروب اكتمل' : `${stat.confirmed}/${COLOR_GROUP_CAPACITY}`}
+                  {stat.isFull ? `القروب اكتمل (${stat.confirmed}/${stat.limit})` : `${stat.confirmed}/${stat.limit}`}
                 </span>
               </div>
               <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#E6DFD3]">
                 <div
                   className={`h-full ${stat.isFull ? 'bg-red-600' : group.swatchClass}`}
                   style={{
-                    width: `${Math.min(100, (stat.confirmed / COLOR_GROUP_CAPACITY) * 100)}%`,
+                    width: `${fillPct}%`,
                   }}
                 />
               </div>
@@ -186,37 +203,91 @@ interface RegistrationTableRowProps {
   reg: RegistrationRecord;
   duplicateNameCounts: Map<string, number>;
   duplicatePhoneCounts: Map<string, number>;
-  confirmDeleteKey: string | null;
-  onSetConfirmDeleteKey: (key: string | null) => void;
+  deletingMemberId: string | null;
+  deletingRegId: number | null;
   onQuickFilterText: (query: string) => void;
+  onUpdateMemberName: (regId: number, memberId: string, newName: string) => Promise<string | null>;
   onToggleMemberPaid: (regId: number, memberId: string) => void;
   onToggleMemberCancelled: (regId: number, memberId: string) => void;
   onApproveAllInReg: (regId: number) => void;
   onCancelAllInReg: (regId: number) => void;
-  onDeleteMember: (regId: number, memberId: string) => void;
-  onDeleteRegistration: (regId: number) => void;
+  onRequestDeleteMember: (regId: number, memberId: string, memberName: string) => void;
+  onRequestDeleteRegistration: (reg: RegistrationRecord) => void;
 }
 
 export const RegistrationTableRow = memo(function RegistrationTableRow({
   reg,
   duplicateNameCounts,
   duplicatePhoneCounts,
-  confirmDeleteKey,
-  onSetConfirmDeleteKey,
+  deletingMemberId,
+  deletingRegId,
   onQuickFilterText,
+  onUpdateMemberName,
   onToggleMemberPaid,
   onToggleMemberCancelled,
   onApproveAllInReg,
   onCancelAllInReg,
-  onDeleteMember,
-  onDeleteRegistration,
+  onRequestDeleteMember,
+  onRequestDeleteRegistration,
 }: RegistrationTableRowProps) {
+  const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  const [editNameDraft, setEditNameDraft] = useState('');
+  const [editError, setEditError] = useState('');
+  const [isSavingName, setIsSavingName] = useState(false);
+
+  const isDeletingThisReg = deletingRegId === reg.id;
+
   const summary = getRegSummary(reg);
   const allCancelled = summary.activeCount === 0;
   const mixedAssignments = hasMixedMemberAssignments(reg);
   const primaryBus = reg.members[0] ? getMemberBus(reg.members[0], reg) : reg.bus;
   const primaryColor = reg.members[0] ? getMemberColor(reg.members[0], reg) : reg.colorGroup;
   const colorMeta = COLOR_GROUP_LIST.find((c) => c.key === primaryColor);
+
+  const startEditingMember = (memberId: string, currentName: string) => {
+    setEditingMemberId(memberId);
+    setEditNameDraft(currentName);
+    setEditError('');
+  };
+
+  const cancelEditingMember = () => {
+    if (isSavingName) return;
+    setEditingMemberId(null);
+    setEditNameDraft('');
+    setEditError('');
+  };
+
+  const handleSaveMemberName = async (memberId: string, originalName: string) => {
+    if (isSavingName) return;
+    const trimmed = editNameDraft.trim().replace(/\s+/g, ' ');
+    const validation = validateAdminMemberName(trimmed);
+    if (!validation.valid) {
+      setEditError(validation.message);
+      return;
+    }
+
+    if (trimmed === originalName.trim().replace(/\s+/g, ' ')) {
+      setEditingMemberId(null);
+      setEditNameDraft('');
+      setEditError('');
+      return;
+    }
+
+    setIsSavingName(true);
+    setEditError('');
+    try {
+      const err = await onUpdateMemberName(reg.id, memberId, trimmed);
+      if (err) {
+        setEditError(err);
+      } else {
+        setEditingMemberId(null);
+        setEditNameDraft('');
+        setEditError('');
+      }
+    } finally {
+      setIsSavingName(false);
+    }
+  };
 
   const rowHasDuplicate = reg.members.some((m) => {
     const nameKey = normalizeArabicText(m.name);
@@ -258,8 +329,7 @@ export const RegistrationTableRow = memo(function RegistrationTableRow({
       <td className="min-w-[330px] px-4 py-3.5">
         <div className="space-y-2">
           {reg.members.map((m) => {
-            const delMemberKey = `del_member_${reg.id}_${m.id}`;
-            const isConfirmingMemberDelete = confirmDeleteKey === delMemberKey;
+            const isDeletingThisMember = deletingMemberId === m.id;
             const normNameKey = normalizeArabicText(m.name);
             const normPhoneKey = normalizePhoneKey(m.phone);
             const nameDupCount = normNameKey ? (duplicateNameCounts.get(normNameKey) ?? 0) : 0;
@@ -281,36 +351,115 @@ export const RegistrationTableRow = memo(function RegistrationTableRow({
                         : 'border-[#E6DFD3] bg-white'
                 }`}
               >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <p
-                      className={`text-sm font-bold ${
-                        isDuplicateName
-                          ? `rounded bg-red-200/90 px-1.5 py-0.5 text-red-950 ${
-                              m.cancelled ? 'line-through' : ''
-                            }`
-                          : m.cancelled
-                            ? 'text-red-700 line-through'
-                            : 'text-[#1E1A16]'
-                      }`}
-                    >
-                      {m.name}
-                    </p>
-                    {m.isMain && (
-                      <span className="text-xs font-normal text-[#6B6155]">(الرئيسي)</span>
-                    )}
-                    {isDuplicateName && (
+                <div className="min-w-0 flex-1">
+                  {editingMemberId === m.id ? (
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={editNameDraft}
+                          disabled={isSavingName}
+                          autoFocus
+                          onChange={(e) => {
+                            setEditNameDraft(e.target.value);
+                            if (editError) setEditError('');
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              void handleSaveMemberName(m.id, m.name);
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              cancelEditingMember();
+                            }
+                          }}
+                          placeholder="اكتب الاسم الثلاثي..."
+                          aria-label="تعديل اسم الفرد"
+                          className={`min-w-[190px] flex-1 rounded-md border bg-white px-2.5 py-1 text-sm font-semibold text-[#1E1A16] focus:outline-none ${
+                            editError
+                              ? 'border-red-500 focus:border-red-600'
+                              : 'border-[#9A5B25] focus:border-[#7C4518]'
+                          }`}
+                        />
+                        <button
+                          type="button"
+                          disabled={isSavingName}
+                          onClick={() => void handleSaveMemberName(m.id, m.name)}
+                          className="inline-flex items-center gap-1 rounded-md bg-emerald-700 px-2.5 py-1 text-xs font-bold text-white transition-colors hover:bg-emerald-800 disabled:opacity-60 whitespace-nowrap cursor-pointer"
+                        >
+                          {isSavingName ? (
+                            <>
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              <span>جارٍ الحفظ...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Check className="h-3 w-3" />
+                              <span>حفظ</span>
+                            </>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isSavingName}
+                          onClick={cancelEditingMember}
+                          className="inline-flex items-center gap-1 rounded-md border border-[#D4CBBF] bg-white px-2 py-1 text-xs font-semibold text-[#5C5349] transition-colors hover:bg-[#F5F1E9] disabled:opacity-50 whitespace-nowrap cursor-pointer"
+                        >
+                          <X className="h-3 w-3" />
+                          <span>إلغاء</span>
+                        </button>
+                      </div>
+                      {editError && (
+                        <p
+                          role="alert"
+                          className="flex items-start gap-1 text-xs font-semibold text-red-700"
+                        >
+                          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>{editError}</span>
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <p
+                        className={`text-sm font-bold ${
+                          isDuplicateName
+                            ? `rounded bg-red-200/90 px-1.5 py-0.5 text-red-950 ${
+                                m.cancelled ? 'line-through' : ''
+                              }`
+                            : m.cancelled
+                              ? 'text-red-700 line-through'
+                              : 'text-[#1E1A16]'
+                        }`}
+                      >
+                        {m.name}
+                      </p>
                       <button
                         type="button"
-                        onClick={() => onQuickFilterText(m.name)}
-                        title="اضغط لعرض كل الحجوزات التي تحمل هذا الاسم ومقارنتها"
-                        className="inline-flex items-center gap-1 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-extrabold text-white transition-colors hover:bg-red-700 whitespace-nowrap cursor-pointer"
+                        onClick={() => startEditingMember(m.id, m.name)}
+                        title="تعديل الاسم"
+                        aria-label={`تعديل اسم ${m.name}`}
+                        className="inline-flex items-center gap-1 rounded border border-[#DFD5C7] bg-[#FAF8F4] px-1.5 py-0.5 text-[11px] font-semibold text-[#6B5A46] transition-colors hover:border-[#9A5B25]/50 hover:bg-[#F5ECE0] hover:text-[#7C4518] whitespace-nowrap cursor-pointer"
                       >
-                        <AlertTriangle className="h-3 w-3 shrink-0" />
-                        <span>اسم مكرر (×{nameDupCount})</span>
+                        <Pencil className="h-2.5 w-2.5" />
+                        <span>تعديل</span>
                       </button>
-                    )}
-                  </div>
+                      {m.isMain && (
+                        <span className="text-xs font-normal text-[#6B6155]">(الرئيسي)</span>
+                      )}
+                      {isDuplicateName && (
+                        <button
+                          type="button"
+                          onClick={() => onQuickFilterText(m.name)}
+                          title="اضغط لعرض كل الحجوزات التي تحمل هذا الاسم ومقارنتها"
+                          className="inline-flex items-center gap-1 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-extrabold text-white transition-colors hover:bg-red-700 whitespace-nowrap cursor-pointer"
+                        >
+                          <AlertTriangle className="h-3 w-3 shrink-0" />
+                          <span>اسم مكرر (×{nameDupCount})</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#5C5349]">
                     <span
                       className={`font-mono-num ${
@@ -410,54 +559,40 @@ export const RegistrationTableRow = memo(function RegistrationTableRow({
                   )}
 
                   {m.cancelled ? (
-                    isConfirmingMemberDelete ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onSetConfirmDeleteKey(null);
-                            onDeleteMember(reg.id, m.id);
-                          }}
-                          className="inline-flex items-center gap-1 rounded-md bg-red-700 px-2.5 py-1 text-xs font-bold text-white transition-colors hover:bg-red-800 whitespace-nowrap cursor-pointer"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                          <span>تأكيد الحذف</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onSetConfirmDeleteKey(null)}
-                          className="inline-flex items-center rounded-md border border-[#D4CBBF] bg-white px-2 py-1 text-xs font-semibold text-[#5C5349] transition-colors hover:bg-[#F5F1E9] whitespace-nowrap cursor-pointer"
-                        >
-                          تراجع
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => onToggleMemberCancelled(reg.id, m.id)}
-                          className="inline-flex items-center gap-1 rounded-md bg-sky-700 px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-sky-800 whitespace-nowrap cursor-pointer"
-                        >
-                          <RotateCcw className="h-3 w-3" />
-                          <span>استرجاع</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onSetConfirmDeleteKey(delMemberKey)}
-                          className="inline-flex items-center gap-1 rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-semibold text-red-700 transition-colors hover:bg-red-700 hover:text-white whitespace-nowrap cursor-pointer"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                          <span>حذف</span>
-                        </button>
-                      </>
-                    )
+                    <>
+                      <button
+                        type="button"
+                        disabled={isDeletingThisMember || isDeletingThisReg}
+                        onClick={() => onToggleMemberCancelled(reg.id, m.id)}
+                        className="inline-flex items-center gap-1 rounded-md bg-sky-700 px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-sky-800 disabled:opacity-50 whitespace-nowrap cursor-pointer"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        <span>استرجاع</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isDeletingThisMember || isDeletingThisReg}
+                        onClick={() => onRequestDeleteMember(reg.id, m.id, m.name)}
+                        className="inline-flex items-center gap-1 rounded-md bg-red-900 px-2.5 py-1 text-xs font-bold text-white transition-colors hover:bg-red-950 disabled:opacity-60 whitespace-nowrap cursor-pointer"
+                      >
+                        {isDeletingThisMember ? (
+                          <>
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            <span>جارٍ المسح...</span>
+                          </>
+                        ) : (
+                          <span>مسح نهائي 🗑️</span>
+                        )}
+                      </button>
+                    </>
                   ) : (
                     <button
                       type="button"
+                      disabled={isDeletingThisReg}
                       onClick={() => onToggleMemberCancelled(reg.id, m.id)}
-                      className="inline-flex items-center gap-1 rounded-md bg-red-700 px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-red-800 whitespace-nowrap cursor-pointer"
+                      className="inline-flex items-center gap-1 rounded-md bg-red-700 px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-red-800 disabled:opacity-50 whitespace-nowrap cursor-pointer"
                     >
-                      <span>إلغاء</span>
+                      <span>إلغاء ✕</span>
                     </button>
                   )}
                 </div>
@@ -555,49 +690,35 @@ export const RegistrationTableRow = memo(function RegistrationTableRow({
 
           <button
             type="button"
-            onClick={() => {
-              onSetConfirmDeleteKey(null);
-              onCancelAllInReg(reg.id);
-            }}
-            className={`rounded-md px-3 py-1.5 text-xs font-semibold text-white transition-colors cursor-pointer ${
+            disabled={isDeletingThisReg}
+            onClick={() => onCancelAllInReg(reg.id)}
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold text-white transition-colors disabled:opacity-50 cursor-pointer ${
               allCancelled ? 'bg-sky-700 hover:bg-sky-800' : 'bg-red-700 hover:bg-red-800'
             }`}
           >
             {allCancelled ? 'استرجاع الحجز' : 'إلغاء الحجز بالكامل'}
           </button>
 
-          {allCancelled &&
-            (confirmDeleteKey === `del_reg_${reg.id}` ? (
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    onSetConfirmDeleteKey(null);
-                    onDeleteRegistration(reg.id);
-                  }}
-                  className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-red-800 px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-red-900 cursor-pointer"
-                >
+          {allCancelled && (
+            <button
+              type="button"
+              disabled={isDeletingThisReg}
+              onClick={() => onRequestDeleteRegistration(reg)}
+              className="inline-flex items-center justify-center gap-1 rounded-md bg-red-900 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-red-950 disabled:opacity-60 whitespace-nowrap cursor-pointer"
+            >
+              {isDeletingThisReg ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>جارٍ المسح...</span>
+                </>
+              ) : (
+                <>
                   <Trash2 className="h-3.5 w-3.5" />
-                  <span>تأكيد المسح</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onSetConfirmDeleteKey(null)}
-                  className="rounded-md border border-[#D4CBBF] bg-white px-2 py-1.5 text-xs font-semibold text-[#5C5349] hover:bg-[#F5F1E9] cursor-pointer"
-                >
-                  تراجع
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => onSetConfirmDeleteKey(`del_reg_${reg.id}`)}
-                className="inline-flex items-center justify-center gap-1 rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 transition-colors hover:bg-red-700 hover:text-white cursor-pointer"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                <span>حذف نهائي</span>
-              </button>
-            ))}
+                  <span>مسح نهائي 🗑️</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
       </td>
     </tr>

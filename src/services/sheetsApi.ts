@@ -1,9 +1,12 @@
-import type {
-  ColorGroupKey,
-  DailyVisitRecord,
-  RegistrationRecord,
-  TripSettings,
-  VisitorAnalyticsData,
+import {
+  BUS_CAPACITY,
+  COLOR_GROUP_CAPACITY,
+  type CapacityLimits,
+  type ColorGroupKey,
+  type DailyVisitRecord,
+  type RegistrationRecord,
+  type TripSettings,
+  type VisitorAnalyticsData,
 } from '../types/trip';
 import {
   normalizeRegistrationRecord,
@@ -18,36 +21,105 @@ function normalizeSettings(raw?: Partial<TripSettings> | null): TripSettings | u
   };
 }
 
-function normalizeAvailability(raw?: unknown): CapacityCounts | undefined {
+function toLimitInt(val: unknown, fallback: number): number {
+  if (val === undefined || val === null || val === '') return fallback;
+  const num = Number(val);
+  if (!Number.isFinite(num) || num < 0) return fallback;
+  return Math.floor(num);
+}
+
+export function normalizeCapacityLimits(raw?: unknown): CapacityLimits | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const obj = raw as Record<string, unknown>;
-  const buses = obj.buses as Record<string, { confirmed?: number; pending?: number; remaining?: number; isFull?: boolean }> | undefined;
-  const colors = obj.colors as Record<string, { confirmed?: number; pending?: number; remaining?: number; isFull?: boolean }> | undefined;
+  const buses = (obj.buses ?? obj.busLimits) as Record<string, unknown> | undefined;
+  const colors = (obj.colors ?? obj.colorLimits) as Record<string, unknown> | undefined;
+  if (!buses && !colors) return undefined;
+
+  return {
+    buses: {
+      bus1: toLimitInt(buses?.bus1, BUS_CAPACITY),
+      bus2: toLimitInt(buses?.bus2, BUS_CAPACITY),
+    },
+    colors: {
+      pink: toLimitInt(colors?.pink ?? colors?.red, COLOR_GROUP_CAPACITY),
+      black: toLimitInt(colors?.black ?? colors?.blue, COLOR_GROUP_CAPACITY),
+      yellow: toLimitInt(colors?.yellow, COLOR_GROUP_CAPACITY),
+      green: toLimitInt(colors?.green, COLOR_GROUP_CAPACITY),
+    },
+  };
+}
+
+function normalizeAvailability(
+  raw?: unknown,
+  fallbackLimits?: CapacityLimits
+): CapacityCounts | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  const buses = obj.buses as
+    | Record<string, { confirmed?: number; pending?: number; remaining?: number; limit?: number; isFull?: boolean }>
+    | undefined;
+  const colors = obj.colors as
+    | Record<string, { confirmed?: number; pending?: number; remaining?: number; limit?: number; isFull?: boolean }>
+    | undefined;
   if (!buses || !colors) return undefined;
 
+  const rawBusLimits = obj.busLimits as Record<string, unknown> | undefined;
+  const rawColorLimits = obj.colorLimits as Record<string, unknown> | undefined;
+
+  const busLimits = {
+    bus1: toLimitInt(rawBusLimits?.bus1 ?? buses.bus1?.limit, fallbackLimits?.buses.bus1 ?? BUS_CAPACITY),
+    bus2: toLimitInt(rawBusLimits?.bus2 ?? buses.bus2?.limit, fallbackLimits?.buses.bus2 ?? BUS_CAPACITY),
+  };
+
+  const colorLimits = {
+    pink: toLimitInt(
+      rawColorLimits?.pink ?? rawColorLimits?.red ?? colors.pink?.limit ?? colors.red?.limit,
+      fallbackLimits?.colors.pink ?? COLOR_GROUP_CAPACITY
+    ),
+    black: toLimitInt(
+      rawColorLimits?.black ?? rawColorLimits?.blue ?? colors.black?.limit ?? colors.blue?.limit,
+      fallbackLimits?.colors.black ?? COLOR_GROUP_CAPACITY
+    ),
+    yellow: toLimitInt(
+      rawColorLimits?.yellow ?? colors.yellow?.limit,
+      fallbackLimits?.colors.yellow ?? COLOR_GROUP_CAPACITY
+    ),
+    green: toLimitInt(
+      rawColorLimits?.green ?? colors.green?.limit,
+      fallbackLimits?.colors.green ?? COLOR_GROUP_CAPACITY
+    ),
+  };
+
   const normStat = (
-    stat: { confirmed?: number; pending?: number; remaining?: number; isFull?: boolean } | undefined,
+    stat:
+      | { confirmed?: number; pending?: number; remaining?: number; limit?: number; isFull?: boolean }
+      | undefined,
     cap: number
   ) => {
     const confirmed = Number(stat?.confirmed ?? 0);
     const pending = Number(stat?.pending ?? 0);
+    const limit = toLimitInt(stat?.limit, cap);
     const remaining =
-      typeof stat?.remaining === 'number' ? Math.max(0, stat.remaining) : Math.max(0, cap - confirmed);
-    const isFull = typeof stat?.isFull === 'boolean' ? stat.isFull : confirmed >= cap;
-    return { confirmed, pending, remaining, isFull };
+      typeof stat?.remaining === 'number'
+        ? Math.max(0, stat.remaining)
+        : Math.max(0, limit - confirmed);
+    const isFull = typeof stat?.isFull === 'boolean' ? stat.isFull : confirmed >= limit;
+    return { confirmed, pending, remaining, limit, isFull };
   };
 
   return {
     buses: {
-      bus1: normStat(buses.bus1, 50),
-      bus2: normStat(buses.bus2, 50),
+      bus1: normStat(buses.bus1, busLimits.bus1),
+      bus2: normStat(buses.bus2, busLimits.bus2),
     },
     colors: {
-      pink: normStat(colors.pink ?? colors.red, 25),
-      black: normStat(colors.black ?? colors.blue, 25),
-      yellow: normStat(colors.yellow, 25),
-      green: normStat(colors.green, 25),
+      pink: normStat(colors.pink ?? colors.red, colorLimits.pink),
+      black: normStat(colors.black ?? colors.blue, colorLimits.black),
+      yellow: normStat(colors.yellow, colorLimits.yellow),
+      green: normStat(colors.green, colorLimits.green),
     },
+    busLimits,
+    colorLimits,
   };
 }
 
@@ -119,9 +191,19 @@ function normalizeApiResponse<T extends SheetsApiResponse>(data: T): T {
   if (normalizedSettings) {
     normalized.settings = normalizedSettings;
   }
-  const normalizedAvailability = normalizeAvailability(data.availability);
+  const normalizedCapacities = normalizeCapacityLimits(data.capacities);
+  if (normalizedCapacities) {
+    normalized.capacities = normalizedCapacities;
+  }
+  const normalizedAvailability = normalizeAvailability(data.availability, normalizedCapacities);
   if (normalizedAvailability) {
     normalized.availability = normalizedAvailability;
+    if (!normalized.capacities) {
+      normalized.capacities = {
+        buses: normalizedAvailability.busLimits,
+        colors: normalizedAvailability.colorLimits,
+      };
+    }
   }
   const normalizedAnalytics = normalizeAnalytics(data.analytics);
   if (normalizedAnalytics) {
@@ -154,7 +236,9 @@ export interface SheetsApiResponse {
   approvedCount?: number;
   skippedCount?: number;
   settings?: TripSettings;
+  capacities?: CapacityLimits;
   availability?: CapacityCounts;
+  stats?: Record<string, unknown>;
   analytics?: VisitorAnalyticsData;
   registrations?: RegistrationRecord[];
   created?: RegistrationRecord;
@@ -473,17 +557,47 @@ export async function cancelAllInSheets(
 
 export async function deleteMemberInSheets(
   scriptUrl: string,
-  regId: number,
+  secret: string,
   memberId: string
 ): Promise<RetryableApiResult> {
-  return postWithRetry(scriptUrl, { action: 'deleteMember', regId, memberId }, undefined, 4);
+  return postWithRetry(
+    scriptUrl,
+    {
+      action: 'deleteMember',
+      secret,
+      memberId,
+    },
+    undefined,
+    4
+  );
 }
 
 export async function deleteRegistrationInSheets(
   scriptUrl: string,
+  secret: string,
   regId: number
 ): Promise<RetryableApiResult> {
-  return postWithRetry(scriptUrl, { action: 'deleteReg', regId }, undefined, 4);
+  const result = await postWithRetry(
+    scriptUrl,
+    {
+      action: 'deleteAll',
+      secret,
+      regId,
+    },
+    undefined,
+    4
+  );
+
+  // Seamless fallback if deployed Apps Script has not yet been redeployed with deleteAll
+  if (
+    !result.ok &&
+    typeof result.error === 'string' &&
+    result.error.includes('عملية غير معروفة: deleteAll')
+  ) {
+    return postWithRetry(scriptUrl, { action: 'deleteReg', secret, regId }, undefined, 4);
+  }
+
+  return result;
 }
 
 export async function clearTestDataInSheets(
@@ -587,5 +701,61 @@ export async function updateBaselineVisitsInSheets(
     4
   );
 }
+
+/**
+ * Updates an individual member's name directly in Google Sheets from the Admin Panel.
+ * { action: "updateMemberName", secret: ADMIN_SECRET, memberId, newName }
+ */
+export async function updateMemberNameInSheets(
+  scriptUrl: string,
+  secret: string,
+  memberId: string,
+  newName: string
+): Promise<RetryableApiResult> {
+  return postWithRetry(
+    scriptUrl,
+    {
+      action: 'updateMemberName',
+      secret,
+      memberId,
+      newName,
+    },
+    undefined,
+    4
+  );
+}
+
+/**
+ * Updates dynamic bus & color group capacities in Google Sheets from the Admin Panel.
+ * Sends both canonical (pink/black) and compatibility alias (red/blue) keys.
+ */
+export async function updateCapacitiesInSheets(
+  scriptUrl: string,
+  secret: string,
+  limits: CapacityLimits
+): Promise<RetryableApiResult> {
+  return postWithRetry(
+    scriptUrl,
+    {
+      action: 'updateCapacities',
+      secret,
+      buses: {
+        bus1: Math.max(0, Math.floor(limits.buses.bus1)),
+        bus2: Math.max(0, Math.floor(limits.buses.bus2)),
+      },
+      colors: {
+        pink: Math.max(0, Math.floor(limits.colors.pink)),
+        black: Math.max(0, Math.floor(limits.colors.black)),
+        red: Math.max(0, Math.floor(limits.colors.pink)),
+        blue: Math.max(0, Math.floor(limits.colors.black)),
+        yellow: Math.max(0, Math.floor(limits.colors.yellow)),
+        green: Math.max(0, Math.floor(limits.colors.green)),
+      },
+    },
+    undefined,
+    4
+  );
+}
+
 
 

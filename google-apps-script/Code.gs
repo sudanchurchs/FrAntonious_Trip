@@ -25,6 +25,12 @@ const PROP_SHOW_AVAILABILITY = 'TRIP_SHOW_AVAILABILITY';
 const PROP_REGISTRATION_CLOSED = 'TRIP_REGISTRATION_CLOSED';
 const PROP_BASELINE_UNIQUE = 'TRIP_BASELINE_UNIQUE';
 const PROP_BASELINE_TOTAL = 'TRIP_BASELINE_TOTAL';
+const PROP_BUS_LIMIT_1 = 'TRIP_LIMIT_BUS1';
+const PROP_BUS_LIMIT_2 = 'TRIP_LIMIT_BUS2';
+const PROP_COLOR_LIMIT_PINK = 'TRIP_LIMIT_COLOR_PINK';
+const PROP_COLOR_LIMIT_BLACK = 'TRIP_LIMIT_COLOR_BLACK';
+const PROP_COLOR_LIMIT_YELLOW = 'TRIP_LIMIT_COLOR_YELLOW';
+const PROP_COLOR_LIMIT_GREEN = 'TRIP_LIMIT_COLOR_GREEN';
 
 const TICKET_PRICE = 250;
 const BUS_CAPACITY = 50;
@@ -286,7 +292,50 @@ function saveTripSettings_(showAvailability, registrationClosed) {
   };
 }
 
-function buildAvailabilityPayload_(registrations) {
+function parsePositiveLimit_(raw, fallback) {
+  if (raw === null || raw === undefined || raw === '') return fallback;
+  var n = Number(raw);
+  if (isNaN(n) || n < 0) return fallback;
+  return Math.min(500, Math.floor(n));
+}
+
+function getCapacityLimits_() {
+  var props = PropertiesService.getScriptProperties();
+  var bus1 = parsePositiveLimit_(props.getProperty(PROP_BUS_LIMIT_1), BUS_CAPACITY);
+  var bus2 = parsePositiveLimit_(props.getProperty(PROP_BUS_LIMIT_2), BUS_CAPACITY);
+  var pink = parsePositiveLimit_(props.getProperty(PROP_COLOR_LIMIT_PINK), COLOR_GROUP_CAPACITY);
+  var black = parsePositiveLimit_(props.getProperty(PROP_COLOR_LIMIT_BLACK), COLOR_GROUP_CAPACITY);
+  var yellow = parsePositiveLimit_(props.getProperty(PROP_COLOR_LIMIT_YELLOW), COLOR_GROUP_CAPACITY);
+  var green = parsePositiveLimit_(props.getProperty(PROP_COLOR_LIMIT_GREEN), COLOR_GROUP_CAPACITY);
+
+  return {
+    buses: { bus1: bus1, bus2: bus2 },
+    colors: {
+      pink: pink,
+      black: black,
+      red: pink,
+      blue: black,
+      yellow: yellow,
+      green: green,
+    },
+  };
+}
+
+function saveCapacityLimits_(busLimits, colorLimits) {
+  var props = PropertiesService.getScriptProperties();
+  props.setProperties({
+    TRIP_LIMIT_BUS1: String(busLimits.bus1),
+    TRIP_LIMIT_BUS2: String(busLimits.bus2),
+    TRIP_LIMIT_COLOR_PINK: String(colorLimits.pink),
+    TRIP_LIMIT_COLOR_BLACK: String(colorLimits.black),
+    TRIP_LIMIT_COLOR_YELLOW: String(colorLimits.yellow),
+    TRIP_LIMIT_COLOR_GREEN: String(colorLimits.green),
+  });
+  return getCapacityLimits_();
+}
+
+function buildAvailabilityPayload_(registrations, limitsOverride) {
+  var limits = limitsOverride || getCapacityLimits_();
   var busConfirmed = { bus1: 0, bus2: 0 };
   var busPending = { bus1: 0, bus2: 0 };
   var colorConfirmed = { pink: 0, black: 0, yellow: 0, green: 0 };
@@ -309,21 +358,25 @@ function buildAvailabilityPayload_(registrations) {
 
   function makeBus(key) {
     var confirmed = busConfirmed[key];
+    var limit = limits.buses[key];
     return {
       confirmed: confirmed,
       pending: busPending[key],
-      remaining: Math.max(0, BUS_CAPACITY - confirmed),
-      isFull: confirmed >= BUS_CAPACITY,
+      remaining: Math.max(0, limit - confirmed),
+      limit: limit,
+      isFull: confirmed >= limit,
     };
   }
 
   function makeColor(key) {
     var confirmed = colorConfirmed[key];
+    var limit = limits.colors[key];
     return {
       confirmed: confirmed,
       pending: colorPending[key],
-      remaining: Math.max(0, COLOR_GROUP_CAPACITY - confirmed),
-      isFull: confirmed >= COLOR_GROUP_CAPACITY,
+      remaining: Math.max(0, limit - confirmed),
+      limit: limit,
+      isFull: confirmed >= limit,
     };
   }
 
@@ -338,6 +391,68 @@ function buildAvailabilityPayload_(registrations) {
       yellow: makeColor('yellow'),
       green: makeColor('green'),
     },
+    busLimits: {
+      bus1: limits.buses.bus1,
+      bus2: limits.buses.bus2,
+    },
+    colorLimits: {
+      pink: limits.colors.pink,
+      black: limits.colors.black,
+      red: limits.colors.pink,
+      blue: limits.colors.black,
+      yellow: limits.colors.yellow,
+      green: limits.colors.green,
+    },
+  };
+}
+
+function buildAdminStatsPayload_(registrations) {
+  function calcFor(recFilter) {
+    var s = {
+      expectedMoney: 0,
+      paidMoney: 0,
+      remainingMoney: 0,
+      activePersons: 0,
+      paidPersons: 0,
+      cancelledPersons: 0,
+      byPayment: {
+        instapay: { expected: 0, paid: 0, persons: 0 },
+        orange: { expected: 0, paid: 0, persons: 0 },
+        vf: { expected: 0, paid: 0, persons: 0 },
+      },
+    };
+
+    registrations.forEach(function (r) {
+      if (recFilter && r.recipient !== recFilter) return;
+      r.members.forEach(function (m) {
+        if (m.cancelled) {
+          s.cancelledPersons++;
+        } else {
+          s.activePersons++;
+          s.expectedMoney += TICKET_PRICE;
+          if (s.byPayment[r.paymentMethod]) {
+            s.byPayment[r.paymentMethod].expected += TICKET_PRICE;
+            s.byPayment[r.paymentMethod].persons++;
+          }
+          if (m.paid) {
+            s.paidPersons++;
+            s.paidMoney += TICKET_PRICE;
+            if (s.byPayment[r.paymentMethod]) {
+              s.byPayment[r.paymentMethod].paid += TICKET_PRICE;
+            }
+          }
+        }
+      });
+    });
+
+    s.remainingMoney = s.expectedMoney - s.paidMoney;
+    return s;
+  }
+
+  return {
+    mekhail: calcFor('mekhail'),
+    fayez: calcFor('fayez'),
+    overall: calcFor(null),
   };
 }
 
@@ -502,13 +617,15 @@ function doGet(e) {
     const sheet = ensureRegistrationsSheet_(ss);
     const registrations = parseRegistrationsFromValues_(readRawRows_(sheet));
     const settings = getTripSettings_();
-    const availability = buildAvailabilityPayload_(registrations);
+    const capacities = getCapacityLimits_();
+    const availability = buildAvailabilityPayload_(registrations, capacities);
 
     if (action === 'availability') {
       return jsonOutput_({
         ok: true,
         success: true,
         settings: settings,
+        capacities: capacities,
         availability: availability,
       });
     }
@@ -517,12 +634,14 @@ function doGet(e) {
       ok: true,
       success: true,
       settings: settings,
+      capacities: capacities,
       availability: availability,
       registrations: registrations,
     };
 
     if (action === 'adminData') {
       responsePayload.analytics = getVisitorAnalytics_(ss);
+      responsePayload.stats = buildAdminStatsPayload_(registrations);
     }
 
     return jsonOutput_(responsePayload);
@@ -589,15 +708,23 @@ function doPost(e) {
     }
 
     if (action === 'deleteMember') {
-      return handleDeleteMember_(ss, sheet, Number(payload.regId), String(payload.memberId || ''));
+      return handleDeleteMember_(ss, sheet, payload);
     }
 
-    if (action === 'deleteReg') {
-      return handleDeleteReg_(ss, sheet, Number(payload.regId));
+    if (action === 'deleteAll' || action === 'deleteReg') {
+      return handleDeleteAll_(ss, sheet, payload);
     }
 
     if (action === 'updateSettings') {
       return handleUpdateSettings_(payload);
+    }
+
+    if (action === 'updateCapacities') {
+      return handleUpdateCapacities_(ss, sheet, payload);
+    }
+
+    if (action === 'updateMemberName') {
+      return handleUpdateMemberName_(ss, sheet, payload);
     }
 
     if (action === 'updateBaselineVisits') {
@@ -698,6 +825,184 @@ function handleUpdateBaselineVisits_(ss, payload) {
     ok: true,
     success: true,
     analytics: getVisitorAnalytics_(ss),
+  });
+}
+
+function handleUpdateMemberName_(ss, sheet, payload) {
+  if (String(payload.secret || '') !== ADMIN_SECRET) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'غير مصرح بتعديل أسماء المسجلين.',
+    });
+  }
+
+  var memberId = String(payload.memberId || '').trim();
+  var cleanName = String(payload.newName || '').trim().replace(/\s+/g, ' ');
+  if (!memberId) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'معرف الفرد غير موجود.',
+    });
+  }
+
+  var words = cleanName ? cleanName.split(' ').filter(Boolean) : [];
+  if (words.length < 3) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'الاسم يجب أن يكون ثلاثياً على الأقل (3 كلمات مفصولة بمسافة).',
+    });
+  }
+
+  var values = readRawRows_(sheet);
+  if (values.length === 0) {
+    return jsonOutput_({ ok: false, success: false, retryable: false, error: 'لا توجد سجلات.' });
+  }
+
+  var matchIndex = -1;
+  var newNameKey = normalizeArabicName_(cleanName);
+  for (var i = 0; i < values.length; i++) {
+    var rowMemberId = String(values[i][1] || '').trim();
+    if (rowMemberId === memberId) {
+      matchIndex = i;
+    } else {
+      var isCancelled = String(values[i][6] || '').trim() === 'نعم';
+      if (!isCancelled && normalizeArabicName_(values[i][2]) === newNameKey) {
+        return jsonOutput_({
+          ok: false,
+          success: false,
+          retryable: false,
+          error: 'الاسم الجديد مسجل بالفعل لشخص آخر: ' + cleanName,
+        });
+      }
+    }
+  }
+
+  if (matchIndex === -1) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'الفرد غير موجود في قاعدة البيانات.',
+    });
+  }
+
+  sheet.getRange(matchIndex + 2, 3).setValue(cleanName);
+  values[matchIndex][2] = cleanName;
+  var updatedRegs = parseRegistrationsFromValues_(values);
+
+  return jsonOutput_({
+    ok: true,
+    success: true,
+    registrations: updatedRegs,
+  });
+}
+
+function handleUpdateCapacities_(ss, sheet, payload) {
+  if (String(payload.secret || '') !== ADMIN_SECRET) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'غير مصرح بتعديل سعة الباصات والمجموعات اللونية.',
+    });
+  }
+
+  var current = getCapacityLimits_();
+  var rawBuses = payload.buses || {};
+  var rawColors = payload.colors || {};
+
+  function parseStrictLimit(val, fallback, label) {
+    if (val === undefined || val === null || val === '') return { ok: true, value: fallback };
+    var n = Number(val);
+    if (!isFinite(n) || n < 0 || n > 500 || Math.floor(n) !== n) {
+      return { ok: false, error: 'قيمة السعة غير صحيحة لـ ' + label + ' (يجب أن تكون رقماً صحيحاً بين 0 و 500).' };
+    }
+    return { ok: true, value: n };
+  }
+
+  var b1 = parseStrictLimit(rawBuses.bus1, current.buses.bus1, BUS_LABELS.bus1);
+  if (!b1.ok) return jsonOutput_({ ok: false, success: false, retryable: false, error: b1.error });
+  var b2 = parseStrictLimit(rawBuses.bus2, current.buses.bus2, BUS_LABELS.bus2);
+  if (!b2.ok) return jsonOutput_({ ok: false, success: false, retryable: false, error: b2.error });
+
+  var rawPink = rawColors.pink !== undefined ? rawColors.pink : rawColors.red;
+  var rawBlack = rawColors.black !== undefined ? rawColors.black : rawColors.blue;
+
+  var cPink = parseStrictLimit(rawPink, current.colors.pink, 'قروب ' + COLOR_LABELS.pink);
+  if (!cPink.ok) return jsonOutput_({ ok: false, success: false, retryable: false, error: cPink.error });
+  var cBlack = parseStrictLimit(rawBlack, current.colors.black, 'قروب ' + COLOR_LABELS.black);
+  if (!cBlack.ok) return jsonOutput_({ ok: false, success: false, retryable: false, error: cBlack.error });
+  var cYellow = parseStrictLimit(rawColors.yellow, current.colors.yellow, 'قروب ' + COLOR_LABELS.yellow);
+  if (!cYellow.ok) return jsonOutput_({ ok: false, success: false, retryable: false, error: cYellow.error });
+  var cGreen = parseStrictLimit(rawColors.green, current.colors.green, 'قروب ' + COLOR_LABELS.green);
+  if (!cGreen.ok) return jsonOutput_({ ok: false, success: false, retryable: false, error: cGreen.error });
+
+  var nextBuses = { bus1: b1.value, bus2: b2.value };
+  var nextColors = {
+    pink: cPink.value,
+    black: cBlack.value,
+    yellow: cYellow.value,
+    green: cGreen.value,
+  };
+
+  var registrations = parseRegistrationsFromValues_(readRawRows_(sheet));
+  var confirmed = computeConfirmedCapacities_(registrations);
+
+  var busKeys = ['bus1', 'bus2'];
+  for (var bi = 0; bi < busKeys.length; bi++) {
+    var bk = busKeys[bi];
+    if (nextBuses[bk] < confirmed.buses[bk]) {
+      return jsonOutput_({
+        ok: false,
+        success: false,
+        retryable: false,
+        error:
+          'لا يمكن تقليل سعة ' +
+          BUS_LABELS[bk] +
+          ' إلى ' +
+          nextBuses[bk] +
+          ' لأن عدد المؤكد دفعهم حالياً هو ' +
+          confirmed.buses[bk] +
+          ' فرد.',
+      });
+    }
+  }
+
+  var colorKeys = ['pink', 'black', 'yellow', 'green'];
+  for (var ci = 0; ci < colorKeys.length; ci++) {
+    var ck = colorKeys[ci];
+    if (nextColors[ck] < confirmed.colors[ck]) {
+      return jsonOutput_({
+        ok: false,
+        success: false,
+        retryable: false,
+        error:
+          'لا يمكن تقليل سعة قروب ' +
+          COLOR_LABELS[ck] +
+          ' إلى ' +
+          nextColors[ck] +
+          ' لأن عدد المؤكد دفعهم حالياً هو ' +
+          confirmed.colors[ck] +
+          ' فرد.',
+      });
+    }
+  }
+
+  var savedLimits = saveCapacityLimits_(nextBuses, nextColors);
+  var availability = buildAvailabilityPayload_(registrations, savedLimits);
+  rebuildSummarySheet_(ss, registrations);
+
+  return jsonOutput_({
+    ok: true,
+    success: true,
+    capacities: savedLimits,
+    availability: availability,
   });
 }
 
@@ -870,6 +1175,7 @@ function handleCreate_(ss, sheet, payload) {
   const incomingCount = reg.members.length;
   if (!isTest) {
     const caps = computeConfirmedCapacities_(existingRegs);
+    const limits = getCapacityLimits_();
     var needBuses = { bus1: 0, bus2: 0 };
     var needColors = { pink: 0, black: 0, yellow: 0, green: 0 };
     for (var nc = 0; nc < incomingCount; nc++) {
@@ -882,9 +1188,10 @@ function handleCreate_(ss, sheet, payload) {
       var bKey = busKeysToCheck[bi];
       var bNeed = needBuses[bKey] || 0;
       if (bNeed === 0) continue;
+      var busLimit = limits.buses[bKey];
       var busConfirmed = caps.buses[bKey];
-      var busRemaining = Math.max(0, BUS_CAPACITY - busConfirmed);
-      if (busConfirmed >= BUS_CAPACITY) {
+      var busRemaining = Math.max(0, busLimit - busConfirmed);
+      if (busConfirmed >= busLimit) {
         return jsonOutput_({
           ok: false,
           success: false,
@@ -914,14 +1221,15 @@ function handleCreate_(ss, sheet, payload) {
       var cKey = colorKeysToCheck[ci];
       var cNeed = needColors[cKey] || 0;
       if (cNeed === 0) continue;
+      var colorLimit = limits.colors[cKey];
       var colorConfirmed = caps.colors[cKey];
-      var colorRemaining = Math.max(0, COLOR_GROUP_CAPACITY - colorConfirmed);
-      if (colorConfirmed >= COLOR_GROUP_CAPACITY) {
+      var colorRemaining = Math.max(0, colorLimit - colorConfirmed);
+      if (colorConfirmed >= colorLimit) {
         return jsonOutput_({
           ok: false,
           success: false,
           retryable: false,
-          error: 'القروب اتملا — لا يمكن التسجيل في قروب ' + COLOR_LABELS[cKey] + '.',
+          error: 'القروب اكتمل — لا يمكن التسجيل في قروب ' + COLOR_LABELS[cKey] + '.',
         });
       }
       if (cNeed > colorRemaining) {
@@ -1066,9 +1374,10 @@ function handleTogglePaid_(ss, sheet, regId, memberId) {
   const nextPaid = !targetMember.paid;
   if (nextPaid) {
     const caps = computeConfirmedCapacities_(allRegs);
+    const limits = getCapacityLimits_();
     var mBus = targetMember.bus || targetReg.bus;
     var mColor = targetMember.colorGroup || targetReg.colorGroup;
-    if (caps.buses[mBus] >= BUS_CAPACITY) {
+    if (caps.buses[mBus] >= limits.buses[mBus]) {
       return jsonOutput_({
         ok: false,
         success: false,
@@ -1076,19 +1385,19 @@ function handleTogglePaid_(ss, sheet, regId, memberId) {
           'لا يمكن تأكيد الدفع: ' +
           BUS_LABELS[mBus] +
           ' — البص اتملا (' +
-          BUS_CAPACITY +
+          limits.buses[mBus] +
           ' فرد مؤكد).',
       });
     }
-    if (caps.colors[mColor] >= COLOR_GROUP_CAPACITY) {
+    if (caps.colors[mColor] >= limits.colors[mColor]) {
       return jsonOutput_({
         ok: false,
         success: false,
         error:
           'لا يمكن تأكيد الدفع: قروب ' +
           COLOR_LABELS[mColor] +
-          ' — القروب اتملا (' +
-          COLOR_GROUP_CAPACITY +
+          ' — القروب اكتمل (' +
+          limits.colors[mColor] +
           ' فرد مؤكد).',
       });
     }
@@ -1171,6 +1480,7 @@ function handleApproveAll_(ss, sheet, regId) {
   }
 
   const caps = computeConfirmedCapacities_(allRegs);
+  const limits = getCapacityLimits_();
   var needBuses = { bus1: 0, bus2: 0 };
   var needColors = { pink: 0, black: 0, yellow: 0, green: 0 };
   toApproveMembers.forEach(function (m) {
@@ -1185,7 +1495,7 @@ function handleApproveAll_(ss, sheet, regId) {
     var bKey = bList[bi];
     var bNeed = needBuses[bKey] || 0;
     if (bNeed === 0) continue;
-    var busRemaining = Math.max(0, BUS_CAPACITY - caps.buses[bKey]);
+    var busRemaining = Math.max(0, limits.buses[bKey] - caps.buses[bKey]);
     if (bNeed > busRemaining) {
       return jsonOutput_({
         ok: false,
@@ -1211,14 +1521,14 @@ function handleApproveAll_(ss, sheet, regId) {
     var cKey = cList[ci];
     var cNeed = needColors[cKey] || 0;
     if (cNeed === 0) continue;
-    var colorRemaining = Math.max(0, COLOR_GROUP_CAPACITY - caps.colors[cKey]);
+    var colorRemaining = Math.max(0, limits.colors[cKey] - caps.colors[cKey]);
     if (cNeed > colorRemaining) {
       return jsonOutput_({
         ok: false,
         success: false,
         error:
           colorRemaining === 0
-            ? 'لا يمكن تأكيد الدفع: قروب ' + COLOR_LABELS[cKey] + ' — القروب اتملا.'
+            ? 'لا يمكن تأكيد الدفع: قروب ' + COLOR_LABELS[cKey] + ' — القروب اكتمل.'
             : 'لا يمكن تأكيد الكل (' +
               cNeed +
               ' أفراد في قروب ' +
@@ -1321,42 +1631,120 @@ function handleCancelAll_(ss, sheet, regId) {
   return jsonOutput_({ ok: true, success: true, registrations: allRegs });
 }
 
-function handleDeleteMember_(ss, sheet, regId, memberId) {
+function handleDeleteMember_(ss, sheet, payload) {
+  if (String(payload.secret || '') !== ADMIN_SECRET) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'غير مصرح بمسح الأفراد نهائياً.',
+    });
+  }
+
+  var memberId = String(payload.memberId || '').trim();
+  if (!memberId) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'معرف الفرد غير موجود.',
+    });
+  }
+
   const values = readRawRows_(sheet);
-  if (values.length === 0)
-    return jsonOutput_({ ok: false, success: false, error: 'لا توجد سجلات.' });
+  if (values.length === 0) {
+    return jsonOutput_({ ok: false, success: false, retryable: false, error: 'لا توجد سجلات.' });
+  }
 
   var matchIndex = -1;
   for (var i = 0; i < values.length; i++) {
-    if (String(values[i][0]) === String(regId) && String(values[i][1]) === String(memberId)) {
+    if (String(values[i][1] || '').trim() === memberId) {
       matchIndex = i;
       break;
     }
   }
 
   if (matchIndex === -1) {
-    return jsonOutput_({ ok: false, success: false, error: 'الفرد غير موجود أو تم حذفه مسبقاً.' });
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'الفرد غير موجود أو تم مسحه مسبقاً.',
+    });
   }
 
+  var targetRegIdStr = String(values[matchIndex][0] || '').trim();
   sheet.deleteRow(matchIndex + 2);
   values.splice(matchIndex, 1);
 
+  // إذا تبقى أفراد آخرون في نفس الفاتورة: تأكد من وجود فرد رئيسي وتحديث نوع الحجز إذا بقي فرد واحد
+  var siblingIndices = [];
+  var hasMainSibling = false;
+  for (var s = 0; s < values.length; s++) {
+    if (String(values[s][0] || '').trim() === targetRegIdStr) {
+      siblingIndices.push(s);
+      if (String(values[s][4] || '').trim() === 'رئيسي') {
+        hasMainSibling = true;
+      }
+    }
+  }
+
+  if (siblingIndices.length > 0 && !hasMainSibling) {
+    var firstIdx = siblingIndices[0];
+    values[firstIdx][4] = 'رئيسي';
+    sheet.getRange(firstIdx + 2, 5).setValue('رئيسي');
+  }
+  if (siblingIndices.length === 1) {
+    var onlyIdx = siblingIndices[0];
+    values[onlyIdx][9] = 'فردي';
+    sheet.getRange(onlyIdx + 2, 10).setValue('فردي');
+  }
+
   const updated = parseRegistrationsFromValues_(values);
+  const limits = getCapacityLimits_();
   syncSeqProperty_(updated);
   rebuildSummarySheet_(ss, updated);
-  return jsonOutput_({ ok: true, success: true, registrations: updated });
+
+  return jsonOutput_({
+    ok: true,
+    success: true,
+    registrations: updated,
+    stats: buildAdminStatsPayload_(updated),
+    availability: buildAvailabilityPayload_(updated, limits),
+    capacities: limits,
+  });
 }
 
-function handleDeleteReg_(ss, sheet, regId) {
+function handleDeleteAll_(ss, sheet, payload) {
+  if (String(payload.secret || '') !== ADMIN_SECRET) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'غير مصرح بمسح الفاتورة نهائياً.',
+    });
+  }
+
+  var regIdStr = String(payload.regId || '').trim();
+  if (!regIdStr) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'كود الفاتورة غير موجود.',
+    });
+  }
+
   const values = readRawRows_(sheet);
-  if (values.length === 0)
-    return jsonOutput_({ ok: false, success: false, error: 'لا توجد سجلات.' });
+  if (values.length === 0) {
+    return jsonOutput_({ ok: false, success: false, retryable: false, error: 'لا توجد سجلات.' });
+  }
 
   const matchedRowNumbers = [];
   const remainingValues = [];
 
   for (var i = 0; i < values.length; i++) {
-    if (String(values[i][0]) === String(regId)) {
+    if (String(values[i][0] || '').trim() === regIdStr) {
       matchedRowNumbers.push(i + 2);
     } else {
       remainingValues.push(values[i]);
@@ -1364,7 +1752,12 @@ function handleDeleteReg_(ss, sheet, regId) {
   }
 
   if (matchedRowNumbers.length === 0) {
-    return jsonOutput_({ ok: false, success: false, error: 'الحجز غير موجود أو تم حذفه مسبقاً.' });
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'الفاتورة غير موجودة أو تم مسحها مسبقاً.',
+    });
   }
 
   var idx = matchedRowNumbers.length - 1;
@@ -1380,9 +1773,18 @@ function handleDeleteReg_(ss, sheet, regId) {
   }
 
   const updated = parseRegistrationsFromValues_(remainingValues);
+  const limits = getCapacityLimits_();
   syncSeqProperty_(updated);
   rebuildSummarySheet_(ss, updated);
-  return jsonOutput_({ ok: true, success: true, registrations: updated });
+
+  return jsonOutput_({
+    ok: true,
+    success: true,
+    registrations: updated,
+    stats: buildAdminStatsPayload_(updated),
+    availability: buildAvailabilityPayload_(updated, limits),
+    capacities: limits,
+  });
 }
 
 /**
@@ -1472,15 +1874,16 @@ function handleApproveAllTest_(ss, sheet, secret) {
 
   const allRegs = parseRegistrationsFromValues_(values);
   const caps = computeConfirmedCapacities_(allRegs);
+  const limits = getCapacityLimits_();
   const busRem = {
-    bus1: Math.max(0, BUS_CAPACITY - caps.buses.bus1),
-    bus2: Math.max(0, BUS_CAPACITY - caps.buses.bus2),
+    bus1: Math.max(0, limits.buses.bus1 - caps.buses.bus1),
+    bus2: Math.max(0, limits.buses.bus2 - caps.buses.bus2),
   };
   const colorRem = {
-    pink: Math.max(0, COLOR_GROUP_CAPACITY - caps.colors.pink),
-    black: Math.max(0, COLOR_GROUP_CAPACITY - caps.colors.black),
-    yellow: Math.max(0, COLOR_GROUP_CAPACITY - caps.colors.yellow),
-    green: Math.max(0, COLOR_GROUP_CAPACITY - caps.colors.green),
+    pink: Math.max(0, limits.colors.pink - caps.colors.pink),
+    black: Math.max(0, limits.colors.black - caps.colors.black),
+    yellow: Math.max(0, limits.colors.yellow - caps.colors.yellow),
+    green: Math.max(0, limits.colors.green - caps.colors.green),
   };
 
   const numRows = values.length;
@@ -1671,6 +2074,7 @@ function rebuildSummarySheet_(ss, registrations) {
   var fayez = calcStats('fayez');
   var overall = calcStats(null);
   var caps = computeConfirmedCapacities_(registrations);
+  var limits = getCapacityLimits_();
 
   var rows = [
     ['ملخص حسابات رحلة دير الأنبا أنطونيوس - اجتماع شباب الثلاثة فتية', '', '', '', '', '', ''],
@@ -1686,15 +2090,15 @@ function rebuildSummarySheet_(ss, registrations) {
     ['أورانج كاش', overall.orange.paid, overall.orange.expected, overall.orange.persons, '', '', ''],
     ['فودافون كاش', overall.vf.paid, overall.vf.expected, overall.vf.persons, '', '', ''],
     ['', '', '', '', '', '', ''],
-    ['الباص (سعة 50 فرد مؤكد)', 'المؤكدين بالدفع', 'المتبقي', 'الحالة', '', '', ''],
-    ['الباص الأول', caps.buses.bus1, Math.max(0, BUS_CAPACITY - caps.buses.bus1), caps.buses.bus1 >= BUS_CAPACITY ? 'البص اتملا' : 'متاح', '', '', ''],
-    ['الباص الثاني', caps.buses.bus2, Math.max(0, BUS_CAPACITY - caps.buses.bus2), caps.buses.bus2 >= BUS_CAPACITY ? 'البص اتملا' : 'متاح', '', '', ''],
+    ['الباص', 'المؤكدين بالدفع', 'السعة القصوى', 'المتبقي', 'الحالة', '', ''],
+    ['الباص الأول', caps.buses.bus1, limits.buses.bus1, Math.max(0, limits.buses.bus1 - caps.buses.bus1), caps.buses.bus1 >= limits.buses.bus1 ? 'البص اتملا' : 'متاح', '', ''],
+    ['الباص الثاني', caps.buses.bus2, limits.buses.bus2, Math.max(0, limits.buses.bus2 - caps.buses.bus2), caps.buses.bus2 >= limits.buses.bus2 ? 'البص اتملا' : 'متاح', '', ''],
     ['', '', '', '', '', '', ''],
-    ['القروب اللوني (سعة 25 فرد مؤكد)', 'المؤكدين بالدفع', 'المتبقي', 'الحالة', '', '', ''],
-    ['قروب وردي', caps.colors.pink, Math.max(0, COLOR_GROUP_CAPACITY - caps.colors.pink), caps.colors.pink >= COLOR_GROUP_CAPACITY ? 'القروب اكتمل' : 'متاح', '', '', ''],
-    ['قروب أسود', caps.colors.black, Math.max(0, COLOR_GROUP_CAPACITY - caps.colors.black), caps.colors.black >= COLOR_GROUP_CAPACITY ? 'القروب اكتمل' : 'متاح', '', '', ''],
-    ['قروب أصفر', caps.colors.yellow, Math.max(0, COLOR_GROUP_CAPACITY - caps.colors.yellow), caps.colors.yellow >= COLOR_GROUP_CAPACITY ? 'القروب اكتمل' : 'متاح', '', '', ''],
-    ['قروب أخضر', caps.colors.green, Math.max(0, COLOR_GROUP_CAPACITY - caps.colors.green), caps.colors.green >= COLOR_GROUP_CAPACITY ? 'القروب اكتمل' : 'متاح', '', '', ''],
+    ['القروب اللوني', 'المؤكدين بالدفع', 'السعة القصوى', 'المتبقي', 'الحالة', '', ''],
+    ['قروب وردي', caps.colors.pink, limits.colors.pink, Math.max(0, limits.colors.pink - caps.colors.pink), caps.colors.pink >= limits.colors.pink ? 'القروب اكتمل' : 'متاح', '', ''],
+    ['قروب أسود', caps.colors.black, limits.colors.black, Math.max(0, limits.colors.black - caps.colors.black), caps.colors.black >= limits.colors.black ? 'القروب اكتمل' : 'متاح', '', ''],
+    ['قروب أصفر', caps.colors.yellow, limits.colors.yellow, Math.max(0, limits.colors.yellow - caps.colors.yellow), caps.colors.yellow >= limits.colors.yellow ? 'القروب اكتمل' : 'متاح', '', ''],
+    ['قروب أخضر', caps.colors.green, limits.colors.green, Math.max(0, limits.colors.green - caps.colors.green), caps.colors.green >= limits.colors.green ? 'القروب اكتمل' : 'متاح', '', ''],
   ];
 
   summary.getRange(1, 1, rows.length, 7).setValues(rows);

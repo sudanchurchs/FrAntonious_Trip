@@ -4,12 +4,14 @@ import {
   BUS_LIST,
   COLOR_GROUP_CAPACITY,
   COLOR_GROUP_LIST,
+  DEFAULT_CAPACITY_LIMITS,
   LABELS,
   PAYMENT_METHOD_LIST,
   PAYMENT_RECIPIENT_MAP,
   TICKET_PRICE,
   type BookingStatusKey,
   type BusKey,
+  type CapacityLimits,
   type ColorGroupKey,
   type MemberRecord,
   type PaymentMethodKey,
@@ -168,6 +170,36 @@ export function validateTripleName(rawName: string): ValidationResult {
       valid: false,
       message: 'الاسم لا يقبل إلا ثلاثياً فقط (3 أسماء فقط بدون اسم رابع)',
     };
+  }
+
+  return { valid: true, message: '' };
+}
+
+/**
+ * Validates edited member name in Admin Panel: requires at least 3 words (اسم ثلاثي على الأقل).
+ */
+export function validateAdminMemberName(rawName: string): ValidationResult {
+  const trimmed = rawName.trim().replace(/\s+/g, ' ');
+  if (!trimmed) {
+    return { valid: false, message: 'يرجى إدخال الاسم' };
+  }
+
+  const parts = trimmed.split(' ').filter(Boolean);
+  if (parts.length < 3) {
+    return {
+      valid: false,
+      message: 'الاسم يجب أن يكون ثلاثياً على الأقل (3 كلمات مفصولة بمسافة)',
+    };
+  }
+
+  const validWordPattern = /^[\u0621-\u064Aa-zA-Z]{2,}$/;
+  for (const part of parts) {
+    if (!validWordPattern.test(part)) {
+      return {
+        valid: false,
+        message: 'الاسم يجب أن يحتوي على حروف فقط بدون أرقام أو رموز (حرفين على الأقل لكل كلمة)',
+      };
+    }
   }
 
   return { valid: true, message: '' };
@@ -365,16 +397,29 @@ export function getRegSummary(reg: RegistrationRecord): RegSummary {
   };
 }
 
+export interface CapacityItemStat {
+  confirmed: number;
+  pending: number;
+  remaining: number;
+  limit: number;
+  isFull: boolean;
+}
+
 export interface CapacityCounts {
-  buses: Record<BusKey, { confirmed: number; pending: number; remaining: number; isFull: boolean }>;
-  colors: Record<ColorGroupKey, { confirmed: number; pending: number; remaining: number; isFull: boolean }>;
+  buses: Record<BusKey, CapacityItemStat>;
+  colors: Record<ColorGroupKey, CapacityItemStat>;
+  busLimits: Record<BusKey, number>;
+  colorLimits: Record<ColorGroupKey, number>;
 }
 
 /**
- * Computes confirmed (paid & not cancelled) counts per bus and per color group.
- * A bus is full at 50 confirmed paid members; a color group is full at 25 confirmed paid members.
+ * Computes confirmed (paid & not cancelled) counts per bus and per color group
+ * using dynamic capacity limits (defaults to 50 per bus, 25 per color group).
  */
-export function getCapacityCounts(registrations: RegistrationRecord[]): CapacityCounts {
+export function getCapacityCounts(
+  registrations: RegistrationRecord[],
+  limits: CapacityLimits = DEFAULT_CAPACITY_LIMITS
+): CapacityCounts {
   const busConfirmed: Record<BusKey, number> = { bus1: 0, bus2: 0 };
   const busPending: Record<BusKey, number> = { bus1: 0, bus2: 0 };
   const colorConfirmed: Record<ColorGroupKey, number> = { pink: 0, black: 0, yellow: 0, green: 0 };
@@ -395,23 +440,39 @@ export function getCapacityCounts(registrations: RegistrationRecord[]): Capacity
     }
   }
 
-  const buildBus = (key: BusKey) => {
+  const busLimits: Record<BusKey, number> = {
+    bus1: Math.max(0, Math.floor(Number(limits?.buses?.bus1 ?? BUS_CAPACITY) || 0)),
+    bus2: Math.max(0, Math.floor(Number(limits?.buses?.bus2 ?? BUS_CAPACITY) || 0)),
+  };
+
+  const colorLimits: Record<ColorGroupKey, number> = {
+    pink: Math.max(0, Math.floor(Number(limits?.colors?.pink ?? COLOR_GROUP_CAPACITY) || 0)),
+    black: Math.max(0, Math.floor(Number(limits?.colors?.black ?? COLOR_GROUP_CAPACITY) || 0)),
+    yellow: Math.max(0, Math.floor(Number(limits?.colors?.yellow ?? COLOR_GROUP_CAPACITY) || 0)),
+    green: Math.max(0, Math.floor(Number(limits?.colors?.green ?? COLOR_GROUP_CAPACITY) || 0)),
+  };
+
+  const buildBus = (key: BusKey): CapacityItemStat => {
     const confirmed = busConfirmed[key];
+    const limit = busLimits[key];
     return {
       confirmed,
       pending: busPending[key],
-      remaining: Math.max(0, BUS_CAPACITY - confirmed),
-      isFull: confirmed >= BUS_CAPACITY,
+      remaining: Math.max(0, limit - confirmed),
+      limit,
+      isFull: confirmed >= limit,
     };
   };
 
-  const buildColor = (key: ColorGroupKey) => {
+  const buildColor = (key: ColorGroupKey): CapacityItemStat => {
     const confirmed = colorConfirmed[key];
+    const limit = colorLimits[key];
     return {
       confirmed,
       pending: colorPending[key],
-      remaining: Math.max(0, COLOR_GROUP_CAPACITY - confirmed),
-      isFull: confirmed >= COLOR_GROUP_CAPACITY,
+      remaining: Math.max(0, limit - confirmed),
+      limit,
+      isFull: confirmed >= limit,
     };
   };
 
@@ -426,6 +487,8 @@ export function getCapacityCounts(registrations: RegistrationRecord[]): Capacity
       yellow: buildColor('yellow'),
       green: buildColor('green'),
     },
+    busLimits,
+    colorLimits,
   };
 }
 
@@ -799,7 +862,8 @@ export function matchesRegistrationSearch(reg: RegistrationRecord, rawQuery: str
 export function exportRegistrationsToExcel(
   filtered: RegistrationRecord[],
   allRegistrations: RegistrationRecord[],
-  filenameSuffix: string
+  filenameSuffix: string,
+  limits: CapacityLimits = DEFAULT_CAPACITY_LIMITS
 ): void {
   const memberRows: Record<string, string | number>[] = [];
 
@@ -860,7 +924,7 @@ export function exportRegistrationsToExcel(
   const mekhail = calculateFinancialStats(allRegistrations, 'mekhail');
   const fayez = calculateFinancialStats(allRegistrations, 'fayez');
   const overall = calculateFinancialStats(allRegistrations, null);
-  const caps = getCapacityCounts(allRegistrations);
+  const caps = getCapacityCounts(allRegistrations, limits);
 
   const summaryRows: (string | number)[][] = [
     ['ملخص حسابات رحلة دير الأنبا أنطونيوس - اجتماع شباب الثلاثة فتية'],
@@ -902,19 +966,21 @@ export function exportRegistrationsToExcel(
       overall.byPayment[pm.key].persons,
     ]),
     [],
-    ['حالة الباصات (سعة 50 فرد مؤكد)', 'المؤكدين', 'المتبقي', 'بانتظار الدفع', 'الحالة'],
+    ['حالة الباصات', 'المؤكدين', 'السعة القصوى', 'المتبقي', 'بانتظار الدفع', 'الحالة'],
     ...BUS_LIST.map((b) => [
       b.label,
       caps.buses[b.key].confirmed,
+      caps.buses[b.key].limit,
       caps.buses[b.key].remaining,
       caps.buses[b.key].pending,
       caps.buses[b.key].isFull ? 'البص اتملا' : 'متاح',
     ]),
     [],
-    ['حالة القروبات اللونية (سعة 25 فرد مؤكد)', 'المؤكدين', 'المتبقي', 'بانتظار الدفع', 'الحالة'],
+    ['حالة القروبات اللونية', 'المؤكدين', 'السعة القصوى', 'المتبقي', 'بانتظار الدفع', 'الحالة'],
     ...COLOR_GROUP_LIST.map((c) => [
       `قروب ${LABELS.colors[c.key]}`,
       caps.colors[c.key].confirmed,
+      caps.colors[c.key].limit,
       caps.colors[c.key].remaining,
       caps.colors[c.key].pending,
       caps.colors[c.key].isFull ? 'القروب اكتمل' : 'متاح',

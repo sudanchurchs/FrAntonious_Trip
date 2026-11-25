@@ -46,3 +46,61 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+#trip-pdf-print-root {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 11mm 10mm;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #1e1a16 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  #root {
+    display: none !important;
+  }
+
+  #trip-pdf-print-root {
+    display: block !important;
+    width: 100% !important;
+    direction: rtl !important;
+    font-family: 'Tajawal', 'Cairo', 'Segoe UI', Tahoma, sans-serif !important;
+    color: #1e1a16 !important;
+  }
+
+  .pdf-section-break {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .pdf-avoid-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  #trip-pdf-print-root table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  #trip-pdf-print-root thead {
+    display: table-header-group;
+  }
+
+  #trip-pdf-print-root tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}
+

@@ -84,8 +84,27 @@ export const TICKET_PRICE = 250;
 export const BUS_CAPACITY = 50;
 export const COLOR_GROUP_CAPACITY = 25;
 
+export interface CapacityLimits {
+  buses: Record<BusKey, number>;
+  colors: Record<ColorGroupKey, number>;
+}
+
+export const DEFAULT_CAPACITY_LIMITS: CapacityLimits = {
+  buses: {
+    bus1: BUS_CAPACITY,
+    bus2: BUS_CAPACITY,
+  },
+  colors: {
+    pink: COLOR_GROUP_CAPACITY,
+    black: COLOR_GROUP_CAPACITY,
+    yellow: COLOR_GROUP_CAPACITY,
+    green: COLOR_GROUP_CAPACITY,
+  },
+};
+
 export const STORAGE_KEY = 'trip_registrations';
 export const SETTINGS_STORAGE_KEY = 'trip_live_settings_v1';
+export const CAPACITY_LIMITS_STORAGE_KEY = 'trip_capacity_limits_v1';
 export const VISITOR_COUNTED_STORAGE_KEY = 'trip_visitor_counted';
 export const ANALYTICS_STORAGE_KEY = 'trip_visitor_analytics_v1';
 export const WHATSAPP_STORAGE_KEY = 'trip_whatsapp_numbers_v2';

@@ -15,12 +15,14 @@ import {
   Database,
   Download,
   FileSpreadsheet,
+  FileText,
   KeyRound,
   LogOut,
   Phone,
   RefreshCw,
   Search,
   Settings2,
+  Trash2,
   X,
 } from 'lucide-react';
 import {
@@ -28,6 +30,7 @@ import {
   PAYMENT_METHOD_LIST,
   RECIPIENT_LIST,
   type BookingStatusKey,
+  type CapacityLimits,
   type PaymentMethodKey,
   type RecipientKey,
   type RegistrationRecord,
@@ -56,6 +59,8 @@ import {
 } from './AdminMemoComponents';
 import { AdminStressTestPanel } from './AdminStressTestPanel';
 import { AdminLiveControlCard } from './AdminLiveControlCard';
+import { AdminCapacityControlCard } from './AdminCapacityControlCard';
+import { AdminPdfExportModal } from './AdminPdfExportModal';
 import { VisitorAnalyticsModal } from './VisitorAnalyticsModal';
 
 const LAZY_PAGE_SIZE = 20;
@@ -64,6 +69,9 @@ interface AdminPanelViewProps {
   currentOrganizer: RecipientKey;
   registrations: RegistrationRecord[];
   capacities: CapacityCounts;
+  capacityLimits: CapacityLimits;
+  onSaveCapacities: (nextLimits: CapacityLimits) => Promise<string | null>;
+  onUpdateMemberName: (regId: number, memberId: string, newName: string) => Promise<string | null>;
   tripSettings: TripSettings;
   isSavingSettings: boolean;
   settingsSavedPulse: boolean;
@@ -92,8 +100,8 @@ interface AdminPanelViewProps {
   onToggleMemberCancelled: (regId: number, memberId: string) => string | null;
   onApproveAllInReg: (regId: number) => string | null;
   onCancelAllInReg: (regId: number) => string | null;
-  onDeleteMember: (regId: number, memberId: string) => string | null;
-  onDeleteRegistration: (regId: number) => string | null;
+  onDeleteMember: (regId: number, memberId: string) => Promise<string | null>;
+  onDeleteRegistration: (regId: number) => Promise<string | null>;
   onGoToRegister: () => void;
   onLogout: () => void;
 }
@@ -102,6 +110,9 @@ export function AdminPanelView({
   currentOrganizer,
   registrations,
   capacities,
+  capacityLimits,
+  onSaveCapacities,
+  onUpdateMemberName,
   tripSettings,
   isSavingSettings,
   settingsSavedPulse,
@@ -146,10 +157,17 @@ export function AdminPanelView({
   const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
 
   const [adminNotice, setAdminNotice] = useState<string>('');
-  const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
+  const [deletingMemberId, setDeletingMemberId] = useState<string | null>(null);
+  const [deletingRegId, setDeletingRegId] = useState<number | null>(null);
+  const [pendingDeleteDialog, setPendingDeleteDialog] = useState<
+    | { kind: 'member'; regId: number; memberId: string; memberName: string }
+    | { kind: 'reg'; reg: RegistrationRecord }
+    | null
+  >(null);
 
   const [showSettings, setShowSettings] = useState(false);
   const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
+  const [showPdfModal, setShowPdfModal] = useState(false);
   const [waDraft, setWaDraft] = useState<WhatsAppConfig>(whatsappNumbers);
   const [waSaved, setWaSaved] = useState(false);
 
@@ -312,16 +330,44 @@ export function AdminPanelView({
     [runInstantAction, onCancelAllInReg]
   );
 
-  const handleDeleteMemberCb = useCallback(
-    (regId: number, memberId: string) =>
-      runInstantAction(() => onDeleteMember(regId, memberId)),
-    [runInstantAction, onDeleteMember]
+  const handleRequestDeleteMemberCb = useCallback(
+    (regId: number, memberId: string, memberName: string) => {
+      setAdminNotice('');
+      setPendingDeleteDialog({ kind: 'member', regId, memberId, memberName });
+    },
+    []
   );
 
-  const handleDeleteRegCb = useCallback(
-    (regId: number) => runInstantAction(() => onDeleteRegistration(regId)),
-    [runInstantAction, onDeleteRegistration]
-  );
+  const handleRequestDeleteRegCb = useCallback((reg: RegistrationRecord) => {
+    setAdminNotice('');
+    setPendingDeleteDialog({ kind: 'reg', reg });
+  }, []);
+
+  const handleConfirmPendingDelete = useCallback(async () => {
+    const target = pendingDeleteDialog;
+    if (!target) return;
+    setPendingDeleteDialog(null);
+    setAdminNotice('');
+
+    if (target.kind === 'member') {
+      setDeletingMemberId(target.memberId);
+      try {
+        const err = await onDeleteMember(target.regId, target.memberId);
+        if (err) setAdminNotice(err);
+      } finally {
+        setDeletingMemberId((cur) => (cur === target.memberId ? null : cur));
+      }
+      return;
+    }
+
+    setDeletingRegId(target.reg.id);
+    try {
+      const err = await onDeleteRegistration(target.reg.id);
+      if (err) setAdminNotice(err);
+    } finally {
+      setDeletingRegId((cur) => (cur === target.reg.id ? null : cur));
+    }
+  }, [pendingDeleteDialog, onDeleteMember, onDeleteRegistration]);
 
   const handleQuickFilterText = useCallback((query: string) => {
     setSearchQuery(query);
@@ -445,8 +491,22 @@ export function AdminPanelView({
 
           <button
             type="button"
+            onClick={() => setShowPdfModal(true)}
+            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-[#9A5B25] px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-[#7C4518] whitespace-nowrap cursor-pointer"
+          >
+            <FileText className="h-4 w-4" />
+            <span>تصدير كشف PDF</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() =>
-              exportRegistrationsToExcel(filteredRegistrations, registrations, filterRecipient)
+              exportRegistrationsToExcel(
+                filteredRegistrations,
+                registrations,
+                filterRecipient,
+                capacityLimits
+              )
             }
             className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-emerald-800 whitespace-nowrap cursor-pointer"
           >
@@ -698,6 +758,14 @@ export function AdminPanelView({
       {/* Memoized Live Confirmed Capacity Board */}
       <AdminCapacityBoard capacities={capacities} />
 
+      {/* Dynamic Bus & Color Group Capacity Controls */}
+      <AdminCapacityControlCard
+        capacityLimits={capacityLimits}
+        capacities={capacities}
+        isCloudConnected={isCloudConnected}
+        onSaveCapacities={onSaveCapacities}
+      />
+
       {/* Duplicate Names / Phones Alert Banner (only shown when duplicates exist) */}
       {duplicateStats.hasAnyDuplicates && (
         <div
@@ -923,15 +991,16 @@ export function AdminPanelView({
                       reg={reg}
                       duplicateNameCounts={duplicateNameCounts}
                       duplicatePhoneCounts={duplicatePhoneCounts}
-                      confirmDeleteKey={confirmDeleteKey}
-                      onSetConfirmDeleteKey={setConfirmDeleteKey}
+                      deletingMemberId={deletingMemberId}
+                      deletingRegId={deletingRegId}
                       onQuickFilterText={handleQuickFilterText}
+                      onUpdateMemberName={onUpdateMemberName}
                       onToggleMemberPaid={handleTogglePaidCb}
                       onToggleMemberCancelled={handleToggleCancelledCb}
                       onApproveAllInReg={handleApproveAllCb}
                       onCancelAllInReg={handleCancelAllCb}
-                      onDeleteMember={handleDeleteMemberCb}
-                      onDeleteRegistration={handleDeleteRegCb}
+                      onRequestDeleteMember={handleRequestDeleteMemberCb}
+                      onRequestDeleteRegistration={handleRequestDeleteRegCb}
                     />
                   ))}
                 </tbody>
@@ -963,6 +1032,72 @@ export function AdminPanelView({
           </>
         )}
       </div>
+
+      {/* Permanent Deletion Confirmation Dialog */}
+      {pendingDeleteDialog && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="delete-confirm-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#1E1A16]/55 p-4 backdrop-blur-xs"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setPendingDeleteDialog(null);
+          }}
+        >
+          <div className="w-full max-w-md rounded-xl border border-red-200 bg-white p-5 shadow-xl">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-red-100 text-red-800">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2
+                  id="delete-confirm-title"
+                  className="font-display text-base font-extrabold text-[#1E1A16]"
+                >
+                  {pendingDeleteDialog.kind === 'member'
+                    ? 'تأكيد مسح فرد نهائياً من الفاتورة'
+                    : 'تأكيد مسح الفاتورة بالكامل نهائياً'}
+                </h2>
+                <p className="mt-2 text-sm leading-relaxed text-[#4E463D]">
+                  {pendingDeleteDialog.kind === 'member'
+                    ? `هل أنت متأكد من مسح (${pendingDeleteDialog.memberName}) نهائياً من الفاتورة؟ لن يمكن استرجاعه بعد المسح.`
+                    : `هل أنت متأكد من مسح هذه الفاتورة بالكامل (${pendingDeleteDialog.reg.members.length} ${
+                        pendingDeleteDialog.reg.members.length === 1 ? 'فرد' : 'أفراد'
+                      }) نهائياً من قاعدة البيانات؟ لن يمكن استرجاعها بعد المسح.`}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingDeleteDialog(null)}
+                className="min-h-[40px] rounded-lg border border-[#D4CBBF] bg-white px-4 py-2 text-xs font-semibold text-[#5C5349] transition-colors hover:bg-[#F5F1E9] cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleConfirmPendingDelete()}
+                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-red-800 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-red-900 cursor-pointer"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>نعم، مسح نهائي</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Organized PDF Roster Export Modal */}
+      <AdminPdfExportModal
+        isOpen={showPdfModal}
+        allRegistrations={registrations}
+        filteredRegistrations={filteredRegistrations}
+        capacities={capacities}
+        hasActiveFilters={hasActiveFilters}
+        onClose={() => setShowPdfModal(false)}
+      />
 
       {/* Visitor Analytics Popup Modal */}
       <VisitorAnalyticsModal

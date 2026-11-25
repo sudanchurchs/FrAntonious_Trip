@@ -115,8 +115,10 @@ function BusSelectorGrid({
       >
         {BUS_LIST.map((bus) => {
           const stat = capacities.buses[bus.key];
+          const busLimit = stat.limit ?? capacities.busLimits?.[bus.key] ?? BUS_CAPACITY;
           const isSelected = value === bus.key;
-          const fillPercent = Math.min(100, Math.round((stat.confirmed / BUS_CAPACITY) * 100));
+          const fillPercent =
+            busLimit > 0 ? Math.min(100, Math.round((stat.confirmed / busLimit) * 100)) : 100;
           const remainingWord = getArabicSeatWord(stat.remaining);
           const showFullState = showAvailability && stat.isFull;
 
@@ -173,11 +175,11 @@ function BusSelectorGrid({
                   <div className="flex w-full flex-wrap items-center justify-between gap-2 text-xs">
                     <span
                       dir="ltr"
-                      className={`font-mono-num font-bold ${
+                      className={`font-mono-num font-bold tabular-nums ${
                         stat.isFull ? 'text-red-700' : 'text-[#7C4518]'
                       }`}
                     >
-                      ({stat.confirmed}/{BUS_CAPACITY})
+                      ({stat.confirmed}/{busLimit})
                     </span>
                     <span
                       className={`font-semibold ${stat.isFull ? 'text-red-700' : 'text-[#4E463D]'}`}
@@ -249,11 +251,11 @@ function ColorSelectorGrid({
       >
         {COLOR_GROUP_LIST.map((group) => {
           const stat = capacities.colors[group.key];
+          const colorLimit =
+            stat.limit ?? capacities.colorLimits?.[group.key] ?? COLOR_GROUP_CAPACITY;
           const isSelected = value === group.key;
-          const fillPercent = Math.min(
-            100,
-            Math.round((stat.confirmed / COLOR_GROUP_CAPACITY) * 100)
-          );
+          const fillPercent =
+            colorLimit > 0 ? Math.min(100, Math.round((stat.confirmed / colorLimit) * 100)) : 100;
           const remainingWord = getArabicSeatWord(stat.remaining);
           const showFullState = showAvailability && stat.isFull;
 
@@ -305,17 +307,17 @@ function ColorSelectorGrid({
                   <div className="flex w-full flex-wrap items-center justify-between gap-2 text-xs">
                     <span
                       dir="ltr"
-                      className={`font-mono-num font-bold ${
+                      className={`font-mono-num font-bold tabular-nums ${
                         stat.isFull ? 'text-red-700' : 'text-[#5C5349]'
                       }`}
                     >
-                      ({stat.confirmed}/{COLOR_GROUP_CAPACITY})
+                      ({stat.confirmed}/{colorLimit})
                     </span>
                     <span
                       className={`font-semibold ${stat.isFull ? 'text-red-700' : 'text-[#4E463D]'}`}
                     >
                       {stat.isFull
-                        ? 'متبقي 0 مقعد · القروب اتملا'
+                        ? 'متبقي 0 مقعد · القروب اكتمل'
                         : `متبقي ${stat.remaining} ${remainingWord}`}
                     </span>
                   </div>

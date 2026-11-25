@@ -3,9 +3,11 @@ import {
   ADMIN_SESSION_KEY,
   ADMIN_STRESS_SECRET,
   ANALYTICS_STORAGE_KEY,
-  BUS_CAPACITY,
-  COLOR_GROUP_CAPACITY,
+  BUS_LIST,
+  CAPACITY_LIMITS_STORAGE_KEY,
+  COLOR_GROUP_LIST,
   createEmptyVisitorAnalytics,
+  DEFAULT_CAPACITY_LIMITS,
   DEFAULT_TRIP_SETTINGS,
   DEFAULT_WHATSAPP_NUMBERS,
   LABELS,
@@ -13,6 +15,7 @@ import {
   STORAGE_KEY,
   VISITOR_COUNTED_STORAGE_KEY,
   WHATSAPP_STORAGE_KEY,
+  type CapacityLimits,
   type ColorGroupKey,
   type RecipientKey,
   type RegistrationRecord,
@@ -25,7 +28,9 @@ import {
   getMemberBus,
   getMemberColor,
   migrateLegacyRegistrations,
+  normalizeArabicText,
   normalizeRegistrationRecord,
+  validateAdminMemberName,
   type CapacityCounts,
 } from './utils/validation';
 import {
@@ -42,10 +47,13 @@ import {
   fetchAnalyticsFromSheets,
   fetchAvailabilityFromSheets,
   fetchRegistrationsFromSheets,
+  normalizeCapacityLimits,
   toggleMemberCancelledInSheets,
   toggleMemberPaidInSheets,
   trackVisitInSheets,
   updateBaselineVisitsInSheets,
+  updateCapacitiesInSheets,
+  updateMemberNameInSheets,
   updateSettingsInSheets,
   type RetryStatusCallback,
   type SheetsApiResponse,
@@ -126,6 +134,17 @@ function loadInitialVisitorAnalytics(): VisitorAnalyticsData {
   }
 }
 
+function loadInitialCapacityLimits(): CapacityLimits {
+  try {
+    const raw = localStorage.getItem(CAPACITY_LIMITS_STORAGE_KEY);
+    if (!raw) return DEFAULT_CAPACITY_LIMITS;
+    const parsed = JSON.parse(raw);
+    return normalizeCapacityLimits(parsed) ?? DEFAULT_CAPACITY_LIMITS;
+  } catch {
+    return DEFAULT_CAPACITY_LIMITS;
+  }
+}
+
 export default function App() {
   const [activeView, setActiveView] = useState<ActiveView>(() =>
     isAdminUrlPresent() ? 'admin' : 'public'
@@ -135,6 +154,7 @@ export default function App() {
   );
   const [registrations, setRegistrations] = useState<RegistrationRecord[]>(loadInitialRegistrations);
   const [tripSettings, setTripSettings] = useState<TripSettings>(loadInitialTripSettings);
+  const [capacityLimits, setCapacityLimits] = useState<CapacityLimits>(loadInitialCapacityLimits);
   const [visitorAnalytics, setVisitorAnalytics] = useState<VisitorAnalyticsData>(
     loadInitialVisitorAnalytics
   );
@@ -164,6 +184,9 @@ export default function App() {
   const isSavingSettingsRef = useRef<boolean>(false);
   const settingsLockUntilRef = useRef<number>(0);
   const settingsSavedTimerRef = useRef<number | null>(null);
+  const capacitiesSeqRef = useRef<number>(0);
+  const isSavingCapacitiesRef = useRef<boolean>(false);
+  const capacitiesLockUntilRef = useRef<number>(0);
   const isPublicSubmittingRef = useRef<boolean>(false);
   const isAvailabilityPollingRef = useRef<boolean>(false);
   const visitTrackedRef = useRef<boolean>(false);
@@ -202,6 +225,38 @@ export default function App() {
         postSyncMessage({
           type: 'SETTINGS_UPDATED',
           settings: normalized,
+          ts: Date.now(),
+        });
+      }
+    },
+    [postSyncMessage]
+  );
+
+  const persistAndApplyCapacityLimits = useCallback(
+    (next: CapacityLimits, broadcast = true) => {
+      const normalized = normalizeCapacityLimits(next) ?? DEFAULT_CAPACITY_LIMITS;
+      setCapacityLimits((prev) => {
+        if (
+          prev.buses.bus1 === normalized.buses.bus1 &&
+          prev.buses.bus2 === normalized.buses.bus2 &&
+          prev.colors.pink === normalized.colors.pink &&
+          prev.colors.black === normalized.colors.black &&
+          prev.colors.yellow === normalized.colors.yellow &&
+          prev.colors.green === normalized.colors.green
+        ) {
+          return prev;
+        }
+        return normalized;
+      });
+      try {
+        localStorage.setItem(CAPACITY_LIMITS_STORAGE_KEY, JSON.stringify(normalized));
+      } catch {
+        // ignore storage errors
+      }
+      if (broadcast) {
+        postSyncMessage({
+          type: 'CAPACITIES_UPDATED',
+          capacities: normalized,
           ts: Date.now(),
         });
       }
@@ -264,6 +319,7 @@ export default function App() {
 
       const startMutationSeq = mutationSeqRef.current;
       const startSettingsSeq = settingsSeqRef.current;
+      const startCapacitiesSeq = capacitiesSeqRef.current;
       const myFetchSeq = ++fetchSeqRef.current;
 
       try {
@@ -282,6 +338,22 @@ export default function App() {
           Date.now() >= settingsLockUntilRef.current
         ) {
           persistAndApplyTripSettings(res.settings, true);
+        }
+        const incomingLimits =
+          res.capacities ??
+          (res.availability
+            ? {
+                buses: res.availability.busLimits,
+                colors: res.availability.colorLimits,
+              }
+            : undefined);
+        if (
+          incomingLimits &&
+          !isSavingCapacitiesRef.current &&
+          startCapacitiesSeq === capacitiesSeqRef.current &&
+          Date.now() >= capacitiesLockUntilRef.current
+        ) {
+          persistAndApplyCapacityLimits(incomingLimits, true);
         }
         if (res.availability) {
           setLiveAvailability(res.availability);
@@ -317,7 +389,12 @@ export default function App() {
         }
       }
     },
-    [googleScriptUrl, applyRegistrationsIfChanged, persistAndApplyTripSettings]
+    [
+      googleScriptUrl,
+      applyRegistrationsIfChanged,
+      persistAndApplyTripSettings,
+      persistAndApplyCapacityLimits,
+    ]
   );
 
   const pollPublicAvailability = useCallback(async () => {
@@ -329,6 +406,7 @@ export default function App() {
 
     isAvailabilityPollingRef.current = true;
     const startSettingsSeq = settingsSeqRef.current;
+    const startCapacitiesSeq = capacitiesSeqRef.current;
 
     try {
       const res = await fetchAvailabilityFromSheets(targetUrl);
@@ -343,6 +421,23 @@ export default function App() {
         persistAndApplyTripSettings(res.settings, false);
       }
 
+      const incomingLimits =
+        res.capacities ??
+        (res.availability
+          ? {
+              buses: res.availability.busLimits,
+              colors: res.availability.colorLimits,
+            }
+          : undefined);
+      if (
+        incomingLimits &&
+        !isSavingCapacitiesRef.current &&
+        startCapacitiesSeq === capacitiesSeqRef.current &&
+        Date.now() >= capacitiesLockUntilRef.current
+      ) {
+        persistAndApplyCapacityLimits(incomingLimits, false);
+      }
+
       if (res.availability) {
         setLiveAvailability(res.availability);
       } else if (Array.isArray(res.registrations)) {
@@ -355,7 +450,12 @@ export default function App() {
     } finally {
       isAvailabilityPollingRef.current = false;
     }
-  }, [googleScriptUrl, persistAndApplyTripSettings, applyRegistrationsIfChanged]);
+  }, [
+    googleScriptUrl,
+    persistAndApplyTripSettings,
+    persistAndApplyCapacityLimits,
+    applyRegistrationsIfChanged,
+  ]);
 
   /**
    * Queues a Google Sheets write strictly in order behind an instant optimistic UI update.
@@ -581,6 +681,14 @@ export default function App() {
             return;
           }
 
+          if (data.type === 'CAPACITIES_UPDATED' && data.capacities) {
+            if (!isSavingCapacitiesRef.current) {
+              persistAndApplyCapacityLimits(data.capacities as CapacityLimits, false);
+              setLiveAvailability(null);
+            }
+            return;
+          }
+
           if (data.type === 'REGISTRATIONS_UPDATED' && Array.isArray(data.registrations)) {
             if (data.confirmed) {
               remoteMutationLockUntilRef.current = 0;
@@ -613,6 +721,19 @@ export default function App() {
         return;
       }
 
+      if (e.key === CAPACITY_LIMITS_STORAGE_KEY && e.newValue && !isSavingCapacitiesRef.current) {
+        try {
+          const parsed = normalizeCapacityLimits(JSON.parse(e.newValue));
+          if (parsed) {
+            persistAndApplyCapacityLimits(parsed, false);
+            setLiveAvailability(null);
+          }
+        } catch {
+          // ignore invalid JSON
+        }
+        return;
+      }
+
       if (
         e.key === STORAGE_KEY &&
         e.newValue &&
@@ -635,7 +756,7 @@ export default function App() {
       syncChannelRef.current = null;
       channel?.close();
     };
-  }, [applyRegistrationsIfChanged, persistAndApplyTripSettings]);
+  }, [applyRegistrationsIfChanged, persistAndApplyTripSettings, persistAndApplyCapacityLimits]);
 
   useEffect(() => {
     const handleLocationChange = () => {
@@ -684,7 +805,10 @@ export default function App() {
     }
   }, [whatsappNumbers]);
 
-  const computedCapacities = useMemo(() => getCapacityCounts(registrations), [registrations]);
+  const computedCapacities = useMemo(
+    () => getCapacityCounts(registrations, capacityLimits),
+    [registrations, capacityLimits]
+  );
   const capacities = activeView === 'public' && liveAvailability ? liveAvailability : computedCapacities;
 
   const handleUpdateTripSettings = useCallback(
@@ -867,6 +991,166 @@ export default function App() {
     [isCloudConnected, googleScriptUrl]
   );
 
+  const handleUpdateMemberName = useCallback(
+    async (regId: number, memberId: string, newName: string): Promise<string | null> => {
+      const trimmed = newName.trim().replace(/\s+/g, ' ');
+      const check = validateAdminMemberName(trimmed);
+      if (!check.valid) return check.message;
+
+      if (!isCloudConnected) {
+        const targetKey = normalizeArabicText(trimmed);
+        const duplicateExists = registrations.some((reg) =>
+          reg.members.some(
+            (m) =>
+              m.id !== memberId &&
+              !m.cancelled &&
+              normalizeArabicText(m.name) === targetKey
+          )
+        );
+        if (duplicateExists) {
+          return `الاسم الجديد مسجل بالفعل لشخص آخر: ${trimmed}`;
+        }
+
+        commitLocalRegistrations((prev) =>
+          prev.map((reg) =>
+            reg.id !== regId
+              ? reg
+              : {
+                  ...reg,
+                  members: reg.members.map((m) =>
+                    m.id === memberId ? { ...m, name: trimmed } : m
+                  ),
+                }
+          )
+        );
+        return null;
+      }
+
+      mutationSeqRef.current += 1;
+      remoteMutationLockUntilRef.current = Date.now() + 8000;
+      postSyncMessage({ type: 'MUTATION_IN_FLIGHT', ts: Date.now() });
+
+      try {
+        const res = await updateMemberNameInSheets(
+          googleScriptUrl,
+          ADMIN_STRESS_SECRET,
+          memberId,
+          trimmed
+        );
+        if (!res.ok) {
+          const rawErr = res.error || 'تعذر تعديل الاسم في قاعدة البيانات.';
+          if (rawErr.includes('عملية غير معروفة: updateMemberName')) {
+            return 'يرجى تحديث كود Google Apps Script ونشر إصدار جديد (New version) لتفعيل تعديل الأسماء.';
+          }
+          return rawErr;
+        }
+
+        if (Array.isArray(res.registrations)) {
+          applyRegistrationsIfChanged(res.registrations, 'local');
+        } else {
+          commitLocalRegistrations((prev) =>
+            prev.map((reg) =>
+              reg.id !== regId
+                ? reg
+                : {
+                    ...reg,
+                    members: reg.members.map((m) =>
+                      m.id === memberId ? { ...m, name: trimmed } : m
+                    ),
+                  }
+            )
+          );
+        }
+        return null;
+      } catch (err) {
+        return err instanceof Error ? err.message : 'تعذر الاتصال بالسيرفر لتعديل الاسم.';
+      } finally {
+        remoteMutationLockUntilRef.current = 0;
+        postSyncMessage({ type: 'MUTATION_IDLE', ts: Date.now() });
+      }
+    },
+    [
+      isCloudConnected,
+      registrations,
+      googleScriptUrl,
+      commitLocalRegistrations,
+      applyRegistrationsIfChanged,
+      postSyncMessage,
+    ]
+  );
+
+  const handleSaveCapacities = useCallback(
+    async (nextLimits: CapacityLimits): Promise<string | null> => {
+      const cleanLimits: CapacityLimits = {
+        buses: {
+          bus1: Math.max(0, Math.floor(Number(nextLimits.buses.bus1) || 0)),
+          bus2: Math.max(0, Math.floor(Number(nextLimits.buses.bus2) || 0)),
+        },
+        colors: {
+          pink: Math.max(0, Math.floor(Number(nextLimits.colors.pink) || 0)),
+          black: Math.max(0, Math.floor(Number(nextLimits.colors.black) || 0)),
+          yellow: Math.max(0, Math.floor(Number(nextLimits.colors.yellow) || 0)),
+          green: Math.max(0, Math.floor(Number(nextLimits.colors.green) || 0)),
+        },
+      };
+
+      if (!isCloudConnected) {
+        for (const b of BUS_LIST) {
+          const confirmed = computedCapacities.buses[b.key].confirmed;
+          if (cleanLimits.buses[b.key] < confirmed) {
+            return `لا يمكن تقليل سعة ${b.label} إلى ${cleanLimits.buses[b.key]} لأن عدد المؤكد دفعهم حالياً هو ${confirmed} فرد.`;
+          }
+        }
+        for (const c of COLOR_GROUP_LIST) {
+          const confirmed = computedCapacities.colors[c.key].confirmed;
+          if (cleanLimits.colors[c.key] < confirmed) {
+            return `لا يمكن تقليل سعة قروب ${LABELS.colors[c.key]} إلى ${cleanLimits.colors[c.key]} لأن عدد المؤكد دفعهم حالياً هو ${confirmed} فرد.`;
+          }
+        }
+        persistAndApplyCapacityLimits(cleanLimits, true);
+        setLiveAvailability(null);
+        return null;
+      }
+
+      const mySeq = ++capacitiesSeqRef.current;
+      isSavingCapacitiesRef.current = true;
+      capacitiesLockUntilRef.current = Date.now() + 6000;
+
+      try {
+        const res = await updateCapacitiesInSheets(
+          googleScriptUrl,
+          ADMIN_STRESS_SECRET,
+          cleanLimits
+        );
+        if (!res.ok) {
+          const rawErr = res.error || 'تعذر حفظ السعات الجديدة في قاعدة البيانات.';
+          if (rawErr.includes('عملية غير معروفة: updateCapacities')) {
+            return 'يرجى تحديث كود Google Apps Script ونشر إصدار جديد (New version) لتفعيل التحكم في السعات.';
+          }
+          return rawErr;
+        }
+
+        if (mySeq === capacitiesSeqRef.current) {
+          const savedLimits = res.capacities ?? cleanLimits;
+          persistAndApplyCapacityLimits(savedLimits, true);
+          if (res.availability) {
+            setLiveAvailability(res.availability);
+          } else {
+            setLiveAvailability(null);
+          }
+        }
+        return null;
+      } catch (err) {
+        return err instanceof Error ? err.message : 'تعذر الاتصال بالسيرفر لحفظ السعات الجديدة.';
+      } finally {
+        if (mySeq === capacitiesSeqRef.current) {
+          isSavingCapacitiesRef.current = false;
+        }
+      }
+    },
+    [isCloudConnected, computedCapacities, googleScriptUrl, persistAndApplyCapacityLimits]
+  );
+
   const clearAdminUrlParams = () => {
     try {
       if (isAdminUrlPresent()) {
@@ -1036,12 +1320,12 @@ export default function App() {
       const mBus = getMemberBus(targetMember, targetReg);
       const mColor = getMemberColor(targetMember, targetReg);
       const busStat = capacities.buses[mBus];
-      if (busStat.confirmed >= BUS_CAPACITY) {
-        return `لا يمكن تأكيد الدفع: ${LABELS.buses[mBus]} — البص اتملا (${BUS_CAPACITY} فرد مؤكد).`;
+      if (busStat.confirmed >= busStat.limit) {
+        return `لا يمكن تأكيد الدفع: ${LABELS.buses[mBus]} — البص اتملا (${busStat.limit} فرد مؤكد).`;
       }
       const colorStat = capacities.colors[mColor];
-      if (colorStat.confirmed >= COLOR_GROUP_CAPACITY) {
-        return `لا يمكن تأكيد الدفع: قروب ${LABELS.colors[mColor]} — القروب اكتمل (${COLOR_GROUP_CAPACITY} فرد مؤكد).`;
+      if (colorStat.confirmed >= colorStat.limit) {
+        return `لا يمكن تأكيد الدفع: قروب ${LABELS.colors[mColor]} — القروب اكتمل (${colorStat.limit} فرد مؤكد).`;
       }
     }
 
@@ -1121,7 +1405,7 @@ export default function App() {
       const need = neededBus[bKey];
       if (need === 0) continue;
       const busStat = capacities.buses[bKey];
-      if (busStat.confirmed + need > BUS_CAPACITY) {
+      if (busStat.confirmed + need > busStat.limit) {
         return busStat.remaining === 0
           ? `لا يمكن تأكيد الدفع: ${LABELS.buses[bKey]} — البص اتملا.`
           : `لا يمكن تأكيد الكل (${need} أفراد في ${LABELS.buses[bKey]}): المتبقي في ${LABELS.buses[bKey]} هو ${busStat.remaining} مقعد فقط.`;
@@ -1132,7 +1416,7 @@ export default function App() {
       const need = neededColor[cKey];
       if (need === 0) continue;
       const colorStat = capacities.colors[cKey];
-      if (colorStat.confirmed + need > COLOR_GROUP_CAPACITY) {
+      if (colorStat.confirmed + need > colorStat.limit) {
         return colorStat.remaining === 0
           ? `لا يمكن تأكيد الدفع: قروب ${LABELS.colors[cKey]} — القروب اكتمل.`
           : `لا يمكن تأكيد الكل (${need} أفراد في قروب ${LABELS.colors[cKey]}): المتبقي في قروب ${LABELS.colors[cKey]} هو ${colorStat.remaining} مقعد فقط.`;
@@ -1186,42 +1470,137 @@ export default function App() {
     return null;
   };
 
-  const handleDeleteMember = (regId: number, memberId: string): string | null => {
-    setCloudNotice('');
-    commitLocalRegistrations((prev) =>
-      prev
-        .map((reg) =>
-          reg.id !== regId
-            ? reg
-            : {
-                ...reg,
-                members: reg.members.filter((m) => m.id !== memberId),
-              }
-        )
-        .filter((reg) => reg.members.length > 0)
-    );
+  const handleDeleteMember = useCallback(
+    async (regId: number, memberId: string): Promise<string | null> => {
+      setCloudNotice('');
 
-    if (isCloudConnected) {
-      enqueueCloudMutation(
-        () => deleteMemberInSheets(googleScriptUrl, regId, memberId),
-        'تعذر حذف الفرد نهائياً من Google Sheets.'
-      );
-    }
-    return null;
-  };
+      if (!isCloudConnected) {
+        commitLocalRegistrations((prev) =>
+          prev
+            .map((reg) =>
+              reg.id !== regId
+                ? reg
+                : {
+                    ...reg,
+                    members: reg.members.filter((m) => m.id !== memberId),
+                  }
+            )
+            .filter((reg) => reg.members.length > 0)
+        );
+        setLiveAvailability(null);
+        return null;
+      }
 
-  const handleDeleteRegistration = (regId: number): string | null => {
-    setCloudNotice('');
-    commitLocalRegistrations((prev) => prev.filter((reg) => reg.id !== regId));
+      mutationSeqRef.current += 1;
+      remoteMutationLockUntilRef.current = Date.now() + 8000;
+      postSyncMessage({ type: 'MUTATION_IN_FLIGHT', ts: Date.now() });
 
-    if (isCloudConnected) {
-      enqueueCloudMutation(
-        () => deleteRegistrationInSheets(googleScriptUrl, regId),
-        'تعذر حذف الحجز نهائياً من Google Sheets.'
-      );
-    }
-    return null;
-  };
+      try {
+        const res = await deleteMemberInSheets(googleScriptUrl, ADMIN_STRESS_SECRET, memberId);
+        if (!res.ok) {
+          const rawErr = res.error || 'تعذر مسح الفرد نهائياً من Google Sheets.';
+          return rawErr.includes('عملية غير معروفة: delete')
+            ? 'يرجى تحديث كود Google Apps Script ونشر إصدار جديد (New version) لتفعيل المسح النهائي من الشيت.'
+            : rawErr;
+        }
+
+        if (res.capacities) {
+          persistAndApplyCapacityLimits(res.capacities, true);
+        }
+        if (res.availability) {
+          setLiveAvailability(res.availability);
+        } else {
+          setLiveAvailability(null);
+        }
+
+        if (Array.isArray(res.registrations)) {
+          applyRegistrationsIfChanged(res.registrations, 'local');
+        } else {
+          commitLocalRegistrations((prev) =>
+            prev
+              .map((reg) =>
+                reg.id !== regId
+                  ? reg
+                  : {
+                      ...reg,
+                      members: reg.members.filter((m) => m.id !== memberId),
+                    }
+              )
+              .filter((reg) => reg.members.length > 0)
+          );
+        }
+        return null;
+      } catch (err) {
+        return err instanceof Error ? err.message : 'تعذر الاتصال بالسيرفر لمسح الفرد نهائياً.';
+      } finally {
+        remoteMutationLockUntilRef.current = 0;
+        postSyncMessage({ type: 'MUTATION_IDLE', ts: Date.now() });
+      }
+    },
+    [
+      isCloudConnected,
+      googleScriptUrl,
+      commitLocalRegistrations,
+      applyRegistrationsIfChanged,
+      persistAndApplyCapacityLimits,
+      postSyncMessage,
+    ]
+  );
+
+  const handleDeleteRegistration = useCallback(
+    async (regId: number): Promise<string | null> => {
+      setCloudNotice('');
+
+      if (!isCloudConnected) {
+        commitLocalRegistrations((prev) => prev.filter((reg) => reg.id !== regId));
+        setLiveAvailability(null);
+        return null;
+      }
+
+      mutationSeqRef.current += 1;
+      remoteMutationLockUntilRef.current = Date.now() + 8000;
+      postSyncMessage({ type: 'MUTATION_IN_FLIGHT', ts: Date.now() });
+
+      try {
+        const res = await deleteRegistrationInSheets(googleScriptUrl, ADMIN_STRESS_SECRET, regId);
+        if (!res.ok) {
+          const rawErr = res.error || 'تعذر مسح الفاتورة نهائياً من Google Sheets.';
+          return rawErr.includes('عملية غير معروفة: delete')
+            ? 'يرجى تحديث كود Google Apps Script ونشر إصدار جديد (New version) لتفعيل مسح الفاتورة نهائياً من الشيت.'
+            : rawErr;
+        }
+
+        if (res.capacities) {
+          persistAndApplyCapacityLimits(res.capacities, true);
+        }
+        if (res.availability) {
+          setLiveAvailability(res.availability);
+        } else {
+          setLiveAvailability(null);
+        }
+
+        if (Array.isArray(res.registrations)) {
+          applyRegistrationsIfChanged(res.registrations, 'local');
+        } else {
+          commitLocalRegistrations((prev) => prev.filter((reg) => reg.id !== regId));
+        }
+        return null;
+      } catch (err) {
+        return err instanceof Error ? err.message : 'تعذر الاتصال بالسيرفر لمسح الفاتورة نهائياً.';
+      } finally {
+        remoteMutationLockUntilRef.current = 0;
+        postSyncMessage({ type: 'MUTATION_IDLE', ts: Date.now() });
+      }
+    },
+    [
+      isCloudConnected,
+      googleScriptUrl,
+      commitLocalRegistrations,
+      applyRegistrationsIfChanged,
+      persistAndApplyCapacityLimits,
+      postSyncMessage,
+    ]
+  );
 
   const handleStressTestBusyChange = useCallback(
     (busy: boolean) => {
@@ -1256,7 +1635,7 @@ export default function App() {
 
   const handleApproveLocalTestRecords = useCallback(() => {
     commitLocalRegistrations((prev) => {
-      const caps = getCapacityCounts(prev);
+      const caps = getCapacityCounts(prev, capacityLimits);
       const busRem = {
         bus1: caps.buses.bus1.remaining,
         bus2: caps.buses.bus2.remaining,
@@ -1286,7 +1665,7 @@ export default function App() {
         };
       });
     });
-  }, [commitLocalRegistrations]);
+  }, [commitLocalRegistrations, capacityLimits]);
 
   const hidePublicRegistrationCtas = activeView === 'public' && tripSettings.registrationClosed;
 
@@ -1333,6 +1712,9 @@ export default function App() {
             currentOrganizer={authenticatedOrganizer}
             registrations={registrations}
             capacities={capacities}
+            capacityLimits={capacityLimits}
+            onSaveCapacities={handleSaveCapacities}
+            onUpdateMemberName={handleUpdateMemberName}
             tripSettings={tripSettings}
             isSavingSettings={isSavingSettings}
             settingsSavedPulse={settingsSavedPulse}

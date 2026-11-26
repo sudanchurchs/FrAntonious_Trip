@@ -26,12 +26,16 @@ import {
   X,
 } from 'lucide-react';
 import {
+  BUS_LIST,
+  COLOR_GROUP_LIST,
   LABELS,
   PAYMENT_METHOD_LIST,
   RECIPIENT_LIST,
   type AvailabilityVisibilityKey,
   type BookingStatusKey,
+  type BusKey,
   type CapacityLimits,
+  type ColorGroupKey,
   type PaymentMethodKey,
   type RecipientKey,
   type RegistrationRecord,
@@ -45,6 +49,8 @@ import {
   exportRegistrationsToExcel,
   getDuplicateNameCounts,
   getDuplicatePhoneCounts,
+  getMemberBus,
+  getMemberColor,
   getRegSummary,
   hasDuplicateMemberInfo,
   matchesRegistrationSearch,
@@ -73,6 +79,12 @@ interface AdminPanelViewProps {
   capacityLimits: CapacityLimits;
   onSaveCapacities: (nextLimits: CapacityLimits) => Promise<string | null>;
   onUpdateMemberName: (regId: number, memberId: string, newName: string) => Promise<string | null>;
+  onTransferMember: (
+    regId: number,
+    memberId: string,
+    newBus: BusKey,
+    newColor: ColorGroupKey
+  ) => Promise<string | null>;
   tripSettings: TripSettings;
   isSavingSettings: boolean;
   settingsSavedPulse: boolean;
@@ -115,6 +127,7 @@ export function AdminPanelView({
   capacityLimits,
   onSaveCapacities,
   onUpdateMemberName,
+  onTransferMember,
   tripSettings,
   isSavingSettings,
   settingsSavedPulse,
@@ -152,6 +165,8 @@ export function AdminPanelView({
   const [filterRecipient, setFilterRecipient] = useState<'all' | RecipientKey>('all');
   const [filterPayment, setFilterPayment] = useState<'all' | PaymentMethodKey>('all');
   const [filterStatus, setFilterStatus] = useState<'all' | BookingStatusKey>('all');
+  const [filterBus, setFilterBus] = useState<'all' | BusKey>('all');
+  const [filterColor, setFilterColor] = useState<'all' | ColorGroupKey>('all');
   const [onlyDuplicates, setOnlyDuplicates] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const deferredSearchQuery = useDeferredValue(searchQuery);
@@ -160,6 +175,8 @@ export function AdminPanelView({
   const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
 
   const [adminNotice, setAdminNotice] = useState<string>('');
+  const [adminSuccessNotice, setAdminSuccessNotice] = useState<string>('');
+  const successNoticeTimerRef = useRef<number | null>(null);
   const [deletingMemberId, setDeletingMemberId] = useState<string | null>(null);
   const [deletingRegId, setDeletingRegId] = useState<number | null>(null);
   const [pendingDeleteDialog, setPendingDeleteDialog] = useState<
@@ -251,17 +268,29 @@ export function AdminPanelView({
       const matchPay = filterPayment === 'all' || reg.paymentMethod === filterPayment;
       const summary = getRegSummary(reg);
       const matchStatus = filterStatus === 'all' || summary.statusKey === filterStatus;
+      const matchBusAndColor =
+        (filterBus === 'all' && filterColor === 'all') ||
+        reg.members.some((m) => {
+          const mBus = getMemberBus(m, reg);
+          const mColor = getMemberColor(m, reg);
+          return (
+            (filterBus === 'all' || mBus === filterBus) &&
+            (filterColor === 'all' || mColor === filterColor)
+          );
+        });
       const matchDup =
         !onlyDuplicates ||
         hasDuplicateMemberInfo(reg, duplicateNameCounts, duplicatePhoneCounts);
       const matchSearch = matchesRegistrationSearch(reg, deferredSearchQuery);
-      return matchRec && matchPay && matchStatus && matchDup && matchSearch;
+      return matchRec && matchPay && matchStatus && matchBusAndColor && matchDup && matchSearch;
     });
   }, [
     registrations,
     filterRecipient,
     filterPayment,
     filterStatus,
+    filterBus,
+    filterColor,
     onlyDuplicates,
     duplicateNameCounts,
     duplicatePhoneCounts,
@@ -269,14 +298,43 @@ export function AdminPanelView({
   ]);
 
   const filteredMembersCount = useMemo(
-    () => filteredRegistrations.reduce((sum, reg) => sum + reg.members.length, 0),
-    [filteredRegistrations]
+    () =>
+      filteredRegistrations.reduce((sum, reg) => {
+        if (filterBus === 'all' && filterColor === 'all') {
+          return sum + reg.members.length;
+        }
+        return (
+          sum +
+          reg.members.filter(
+            (m) =>
+              (filterBus === 'all' || getMemberBus(m, reg) === filterBus) &&
+              (filterColor === 'all' || getMemberColor(m, reg) === filterColor)
+          ).length
+        );
+      }, 0),
+    [filteredRegistrations, filterBus, filterColor]
   );
 
   // Reset lazy-loading window whenever search or filters change
   useEffect(() => {
     setVisibleCount(LAZY_PAGE_SIZE);
-  }, [deferredSearchQuery, filterRecipient, filterPayment, filterStatus, onlyDuplicates]);
+  }, [
+    deferredSearchQuery,
+    filterRecipient,
+    filterPayment,
+    filterStatus,
+    filterBus,
+    filterColor,
+    onlyDuplicates,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (successNoticeTimerRef.current !== null) {
+        window.clearTimeout(successNoticeTimerRef.current);
+      }
+    };
+  }, []);
 
   const visibleRegistrations = useMemo(
     () => filteredRegistrations.slice(0, visibleCount),
@@ -372,11 +430,25 @@ export function AdminPanelView({
     }
   }, [pendingDeleteDialog, onDeleteMember, onDeleteRegistration]);
 
+  const handleShowSuccessNotice = useCallback((message: string) => {
+    setAdminNotice('');
+    setAdminSuccessNotice(message);
+    if (successNoticeTimerRef.current !== null) {
+      window.clearTimeout(successNoticeTimerRef.current);
+    }
+    successNoticeTimerRef.current = window.setTimeout(() => {
+      setAdminSuccessNotice('');
+      successNoticeTimerRef.current = null;
+    }, 4500);
+  }, []);
+
   const handleQuickFilterText = useCallback((query: string) => {
     setSearchQuery(query);
     setFilterRecipient('all');
     setFilterPayment('all');
     setFilterStatus('all');
+    setFilterBus('all');
+    setFilterColor('all');
     setOnlyDuplicates(false);
   }, []);
 
@@ -441,7 +513,17 @@ export function AdminPanelView({
     filterRecipient !== 'all' ||
     filterPayment !== 'all' ||
     filterStatus !== 'all' ||
+    filterBus !== 'all' ||
+    filterColor !== 'all' ||
     onlyDuplicates;
+
+  const exportFileSuffix = [
+    filterRecipient,
+    filterBus !== 'all' ? filterBus : '',
+    filterColor !== 'all' ? filterColor : '',
+  ]
+    .filter(Boolean)
+    .join('_');
 
   return (
     <div className="space-y-8 pb-16 pt-6 md:pt-10">
@@ -507,8 +589,9 @@ export function AdminPanelView({
               exportRegistrationsToExcel(
                 filteredRegistrations,
                 registrations,
-                filterRecipient,
-                capacityLimits
+                exportFileSuffix,
+                capacityLimits,
+                { bus: filterBus, color: filterColor }
               )
             }
             className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-emerald-800 whitespace-nowrap cursor-pointer"
@@ -519,7 +602,12 @@ export function AdminPanelView({
 
           <button
             type="button"
-            onClick={() => exportRegistrationsToCSV(filteredRegistrations, filterRecipient)}
+            onClick={() =>
+              exportRegistrationsToCSV(filteredRegistrations, exportFileSuffix, {
+                bus: filterBus,
+                color: filterColor,
+              })
+            }
             className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-[#D4CBBF] bg-white px-3.5 py-2 text-xs font-semibold text-[#1E1A16] transition-colors hover:bg-[#F5F1E9] whitespace-nowrap cursor-pointer"
           >
             <Download className="h-4 w-4 text-[#5C5349]" />
@@ -728,6 +816,27 @@ export function AdminPanelView({
         </div>
       )}
 
+      {/* Admin Success Notice (e.g. Member Transferred) */}
+      {adminSuccessNotice && (
+        <div
+          role="status"
+          className="flex items-center justify-between gap-3 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-900"
+        >
+          <div className="flex items-center gap-2">
+            <Check className="h-4 w-4 shrink-0 text-emerald-700" />
+            <span>{adminSuccessNotice}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setAdminSuccessNotice('')}
+            className="rounded p-1 text-emerald-700 hover:bg-emerald-100 cursor-pointer"
+            aria-label="إخفاء رسالة النجاح"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Admin Capacity / Error Notice */}
       {(adminNotice || cloudNotice) && (
         <div
@@ -815,6 +924,8 @@ export function AdminPanelView({
                 setFilterRecipient('all');
                 setFilterPayment('all');
                 setFilterStatus('all');
+                setFilterBus('all');
+                setFilterColor('all');
               }
             }}
             className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-xs font-extrabold transition-colors whitespace-nowrap cursor-pointer ${
@@ -871,7 +982,7 @@ export function AdminPanelView({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 border-t border-[#EFEAE1] pt-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 border-t border-[#EFEAE1] pt-4 sm:grid-cols-2 lg:grid-cols-5">
           <div>
             <label
               htmlFor="filterRecipient"
@@ -931,6 +1042,50 @@ export function AdminPanelView({
               <option value="cancelled">ملغي بالكامل</option>
             </select>
           </div>
+
+          <div>
+            <label
+              htmlFor="filterBus"
+              className="mb-1 block text-xs font-semibold text-[#5C5349]"
+            >
+              فرز حسب الباص
+            </label>
+            <select
+              id="filterBus"
+              value={filterBus}
+              onChange={(e) => setFilterBus(e.target.value as 'all' | BusKey)}
+              className="w-full rounded-lg border border-[#D4CBBF] bg-white px-3 py-2 text-sm text-[#1E1A16] focus:border-[#9A5B25] focus:outline-none"
+            >
+              <option value="all">كل الباصات</option>
+              {BUS_LIST.map((bus) => (
+                <option key={bus.key} value={bus.key}>
+                  {bus.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label
+              htmlFor="filterColor"
+              className="mb-1 block text-xs font-semibold text-[#5C5349]"
+            >
+              فرز حسب القروب اللوني
+            </label>
+            <select
+              id="filterColor"
+              value={filterColor}
+              onChange={(e) => setFilterColor(e.target.value as 'all' | ColorGroupKey)}
+              className="w-full rounded-lg border border-[#D4CBBF] bg-white px-3 py-2 text-sm text-[#1E1A16] focus:border-[#9A5B25] focus:outline-none"
+            >
+              <option value="all">كل القروبات</option>
+              {COLOR_GROUP_LIST.map((group) => (
+                <option key={group.key} value={group.key}>
+                  قروب {LABELS.colors[group.key]}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {hasActiveFilters && (
@@ -942,6 +1097,8 @@ export function AdminPanelView({
                 setFilterRecipient('all');
                 setFilterPayment('all');
                 setFilterStatus('all');
+                setFilterBus('all');
+                setFilterColor('all');
                 setOnlyDuplicates(false);
               }}
               className="text-xs font-semibold text-[#7C4518] hover:underline cursor-pointer"
@@ -993,12 +1150,15 @@ export function AdminPanelView({
                     <RegistrationTableRow
                       key={reg.id}
                       reg={reg}
+                      capacities={capacities}
                       duplicateNameCounts={duplicateNameCounts}
                       duplicatePhoneCounts={duplicatePhoneCounts}
                       deletingMemberId={deletingMemberId}
                       deletingRegId={deletingRegId}
                       onQuickFilterText={handleQuickFilterText}
                       onUpdateMemberName={onUpdateMemberName}
+                      onTransferMember={onTransferMember}
+                      onTransferSuccess={handleShowSuccessNotice}
                       onToggleMemberPaid={handleTogglePaidCb}
                       onToggleMemberCancelled={handleToggleCancelledCb}
                       onApproveAllInReg={handleApproveAllCb}

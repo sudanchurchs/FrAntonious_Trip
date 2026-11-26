@@ -16,6 +16,7 @@ import {
   VISITOR_COUNTED_STORAGE_KEY,
   WHATSAPP_STORAGE_KEY,
   type AvailabilityVisibilityKey,
+  type BusKey,
   type CapacityLimits,
   type ColorGroupKey,
   type RecipientKey,
@@ -53,6 +54,7 @@ import {
   toggleMemberCancelledInSheets,
   toggleMemberPaidInSheets,
   trackVisitInSheets,
+  transferMemberInSheets,
   updateBaselineVisitsInSheets,
   updateCapacitiesInSheets,
   updateMemberNameInSheets,
@@ -1115,6 +1117,139 @@ export default function App() {
     ]
   );
 
+  const handleTransferMember = useCallback(
+    async (
+      regId: number,
+      memberId: string,
+      newBus: BusKey,
+      newColor: ColorGroupKey
+    ): Promise<string | null> => {
+      const targetReg = registrations.find((r) => r.id === regId);
+      const targetMember = targetReg?.members.find((m) => m.id === memberId);
+      if (!targetReg || !targetMember) {
+        return 'الفرد غير موجود في قاعدة البيانات.';
+      }
+      if (targetMember.cancelled) {
+        return 'لا يمكن نقل فرد ملغي — يرجى استرجاعه أولاً.';
+      }
+
+      const oldBus = getMemberBus(targetMember, targetReg);
+      const oldColor = getMemberColor(targetMember, targetReg);
+      if (oldBus === newBus && oldColor === newColor) {
+        return null;
+      }
+
+      if (!isCloudConnected) {
+        if (newBus !== oldBus) {
+          const targetBusStat = computedCapacities.buses[newBus];
+          if (targetBusStat.confirmed >= targetBusStat.limit) {
+            return `لا يمكن النقل: ${LABELS.buses[newBus]} — البص اتملا (${targetBusStat.confirmed}/${targetBusStat.limit}).`;
+          }
+        }
+        if (newColor !== oldColor) {
+          const targetColorStat = computedCapacities.colors[newColor];
+          if (targetColorStat.confirmed >= targetColorStat.limit) {
+            return `لا يمكن النقل: قروب ${LABELS.colors[newColor]} — القروب اكتمل (${targetColorStat.confirmed}/${targetColorStat.limit}).`;
+          }
+        }
+
+        commitLocalRegistrations((prev) =>
+          prev.map((reg) => {
+            if (reg.id !== regId) return reg;
+            const updatedMembers = reg.members.map((m) =>
+              m.id === memberId
+                ? { ...m, bus: newBus, colorGroup: newColor }
+                : {
+                    ...m,
+                    bus: getMemberBus(m, reg),
+                    colorGroup: getMemberColor(m, reg),
+                  }
+            );
+            return {
+              ...reg,
+              bus: updatedMembers[0]?.bus ?? reg.bus,
+              colorGroup: updatedMembers[0]?.colorGroup ?? reg.colorGroup,
+              members: updatedMembers,
+            };
+          })
+        );
+        setLiveAvailability(null);
+        return null;
+      }
+
+      mutationSeqRef.current += 1;
+      remoteMutationLockUntilRef.current = Date.now() + 8000;
+      postSyncMessage({ type: 'MUTATION_IN_FLIGHT', ts: Date.now() });
+
+      try {
+        const res = await transferMemberInSheets(
+          googleScriptUrl,
+          ADMIN_STRESS_SECRET,
+          memberId,
+          newBus,
+          newColor
+        );
+        if (!res.ok) {
+          const rawErr = res.error || 'تعذر نقل الفرد في قاعدة البيانات.';
+          if (rawErr.includes('عملية غير معروفة: transferMember')) {
+            return 'يرجى تحديث كود Google Apps Script ونشر إصدار جديد (New version) لتفعيل ميزة نقل الأفراد.';
+          }
+          return rawErr;
+        }
+
+        if (res.capacities) {
+          persistAndApplyCapacityLimits(res.capacities, true);
+        }
+        if (res.availability) {
+          setLiveAvailability(res.availability);
+        } else {
+          setLiveAvailability(null);
+        }
+
+        if (Array.isArray(res.registrations)) {
+          applyRegistrationsIfChanged(res.registrations, 'local');
+        } else {
+          commitLocalRegistrations((prev) =>
+            prev.map((reg) => {
+              if (reg.id !== regId) return reg;
+              const updatedMembers = reg.members.map((m) =>
+                m.id === memberId
+                  ? { ...m, bus: newBus, colorGroup: newColor }
+                  : {
+                      ...m,
+                      bus: getMemberBus(m, reg),
+                      colorGroup: getMemberColor(m, reg),
+                    }
+              );
+              return {
+                ...reg,
+                bus: updatedMembers[0]?.bus ?? reg.bus,
+                colorGroup: updatedMembers[0]?.colorGroup ?? reg.colorGroup,
+                members: updatedMembers,
+              };
+            })
+          );
+        }
+        return null;
+      } catch (err) {
+        return err instanceof Error ? err.message : 'تعذر الاتصال بالسيرفر لتنفيذ النقل.';
+      } finally {
+        remoteMutationLockUntilRef.current = 0;
+        postSyncMessage({ type: 'MUTATION_IDLE', ts: Date.now() });
+      }
+    },
+    [
+      isCloudConnected,
+      registrations,
+      computedCapacities,
+      googleScriptUrl,
+      commitLocalRegistrations,
+      applyRegistrationsIfChanged,
+      persistAndApplyCapacityLimits,
+      postSyncMessage,
+    ]
+  );
+
   const handleSaveCapacities = useCallback(
     async (nextLimits: CapacityLimits): Promise<string | null> => {
       const cleanLimits: CapacityLimits = {
@@ -1751,6 +1886,7 @@ export default function App() {
             capacityLimits={capacityLimits}
             onSaveCapacities={handleSaveCapacities}
             onUpdateMemberName={handleUpdateMemberName}
+            onTransferMember={handleTransferMember}
             tripSettings={tripSettings}
             isSavingSettings={isSavingSettings}
             settingsSavedPulse={settingsSavedPulse}

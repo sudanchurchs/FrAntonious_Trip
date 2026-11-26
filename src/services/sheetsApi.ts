@@ -2,6 +2,7 @@ import {
   BUS_CAPACITY,
   COLOR_GROUP_CAPACITY,
   type AvailabilityVisibility,
+  type BusKey,
   type CapacityLimits,
   type ColorGroupKey,
   type DailyVisitRecord,
@@ -809,6 +810,54 @@ export async function updateCapacitiesInSheets(
     undefined,
     4
   );
+}
+
+/**
+ * Transfers an active individual member to another bus and/or color group in Google Sheets.
+ * Sends POST with text/plain;charset=utf-8 header and JSON body:
+ * { action: "transferMember", secret: ADMIN_SECRET, memberId, newBus, newColor }
+ */
+export async function transferMemberInSheets(
+  scriptUrl: string,
+  secret: string,
+  memberId: string,
+  newBus: BusKey,
+  newColor: ColorGroupKey
+): Promise<RetryableApiResult> {
+  const result = await postWithRetry(
+    scriptUrl,
+    {
+      action: 'transferMember',
+      secret,
+      memberId,
+      newBus,
+      newColor,
+    },
+    undefined,
+    4
+  );
+
+  // Seamless compatibility if an older script deployment expects legacy red/blue color wire keys
+  if (
+    !result.ok &&
+    typeof result.error === 'string' &&
+    result.error.includes('القروب اللوني غير صحيح')
+  ) {
+    return postWithRetry(
+      scriptUrl,
+      {
+        action: 'transferMember',
+        secret,
+        memberId,
+        newBus,
+        newColor: toLegacyWireColor(newColor),
+      },
+      undefined,
+      4
+    );
+  }
+
+  return result;
 }
 
 

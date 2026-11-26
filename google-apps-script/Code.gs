@@ -448,16 +448,49 @@ function buildAvailabilityPayload_(registrations, limitsOverride) {
     };
   }
 
+  var bus1Stat = makeBus('bus1');
+  var bus2Stat = makeBus('bus2');
+  var pinkStat = makeColor('pink');
+  var blackStat = makeColor('black');
+  var yellowStat = makeColor('yellow');
+  var greenStat = makeColor('green');
+
   return {
     buses: {
-      bus1: makeBus('bus1'),
-      bus2: makeBus('bus2'),
+      bus1: bus1Stat,
+      bus2: bus2Stat,
     },
     colors: {
-      pink: makeColor('pink'),
-      black: makeColor('black'),
-      yellow: makeColor('yellow'),
-      green: makeColor('green'),
+      pink: pinkStat,
+      black: blackStat,
+      red: pinkStat,
+      blue: blackStat,
+      yellow: yellowStat,
+      green: greenStat,
+    },
+    busRemaining: {
+      bus1: bus1Stat.remaining,
+      bus2: bus2Stat.remaining,
+    },
+    busFull: {
+      bus1: bus1Stat.isFull,
+      bus2: bus2Stat.isFull,
+    },
+    colorRemaining: {
+      pink: pinkStat.remaining,
+      black: blackStat.remaining,
+      red: pinkStat.remaining,
+      blue: blackStat.remaining,
+      yellow: yellowStat.remaining,
+      green: greenStat.remaining,
+    },
+    colorFull: {
+      pink: pinkStat.isFull,
+      black: blackStat.isFull,
+      red: pinkStat.isFull,
+      blue: blackStat.isFull,
+      yellow: yellowStat.isFull,
+      green: greenStat.isFull,
     },
     busLimits: {
       bus1: limits.buses.bus1,
@@ -795,6 +828,10 @@ function doPost(e) {
       return handleUpdateMemberName_(ss, sheet, payload);
     }
 
+    if (action === 'transferMember') {
+      return handleTransferMember_(ss, sheet, payload);
+    }
+
     if (action === 'updateBaselineVisits') {
       return handleUpdateBaselineVisits_(ss, payload);
     }
@@ -1003,6 +1040,150 @@ function handleUpdateMemberName_(ss, sheet, payload) {
     ok: true,
     success: true,
     registrations: updatedRegs,
+  });
+}
+
+function handleTransferMember_(ss, sheet, payload) {
+  if (String(payload.secret || '') !== ADMIN_SECRET) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'غير مصرح بنقل الأفراد بين الباصات والمجموعات.',
+    });
+  }
+
+  var memberId = String(payload.memberId || '').trim();
+  if (!memberId) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'معرف الفرد غير موجود.',
+    });
+  }
+
+  var rawBus = String(payload.newBus || '').trim();
+  var newBus = BUS_CODES[rawBus] || BUS_CODES[rawBus.toLowerCase()] || '';
+  if (!newBus) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'اختيار الباص الجديد غير صحيح.',
+    });
+  }
+
+  var rawColor = String(payload.newColor || '').trim();
+  var newColor = COLOR_CODES[rawColor] || COLOR_CODES[rawColor.toLowerCase()] || '';
+  if (!newColor) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'اختيار القروب اللوني غير صحيح.',
+    });
+  }
+
+  var values = readRawRows_(sheet);
+  if (values.length === 0) {
+    return jsonOutput_({ ok: false, success: false, retryable: false, error: 'لا توجد سجلات.' });
+  }
+
+  var matchIndex = -1;
+  for (var i = 0; i < values.length; i++) {
+    if (String(values[i][1] || '').trim() === memberId) {
+      matchIndex = i;
+      break;
+    }
+  }
+
+  if (matchIndex === -1) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'الفرد غير موجود في قاعدة البيانات.',
+    });
+  }
+
+  var isCancelled = String(values[matchIndex][6] || '').trim() === 'نعم';
+  if (isCancelled) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error: 'لا يمكن نقل فرد ملغي — يرجى استرجاعه أولاً.',
+    });
+  }
+
+  var oldBus = BUS_CODES[String(values[matchIndex][7] || '').trim()] || 'bus1';
+  var rawOldColor = String(values[matchIndex][8] || '').trim();
+  var oldColor = COLOR_CODES[rawOldColor] || COLOR_CODES[rawOldColor.toLowerCase()] || 'pink';
+
+  var existingRegs = parseRegistrationsFromValues_(values);
+  var limits = getCapacityLimits_();
+
+  if (oldBus === newBus && oldColor === newColor) {
+    return jsonOutput_({
+      ok: true,
+      success: true,
+      registrations: existingRegs,
+      availability: buildAvailabilityPayload_(existingRegs, limits),
+      stats: buildAdminStatsPayload_(existingRegs),
+      capacities: limits,
+    });
+  }
+
+  var caps = computeConfirmedCapacities_(existingRegs);
+  if (newBus !== oldBus && caps.buses[newBus] >= limits.buses[newBus]) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error:
+        'لا يمكن النقل: ' +
+        BUS_LABELS[newBus] +
+        ' ممتلئ بالفعل (' +
+        caps.buses[newBus] +
+        '/' +
+        limits.buses[newBus] +
+        ').',
+    });
+  }
+
+  if (newColor !== oldColor && caps.colors[newColor] >= limits.colors[newColor]) {
+    return jsonOutput_({
+      ok: false,
+      success: false,
+      retryable: false,
+      error:
+        'لا يمكن النقل: قروب ' +
+        COLOR_LABELS[newColor] +
+        ' مكتمل بالفعل (' +
+        caps.colors[newColor] +
+        '/' +
+        limits.colors[newColor] +
+        ').',
+    });
+  }
+
+  var nextBusLabel = BUS_LABELS[newBus];
+  var nextColorLabel = COLOR_LABELS[newColor];
+  sheet.getRange(matchIndex + 2, 8, 1, 2).setValues([[nextBusLabel, nextColorLabel]]);
+  values[matchIndex][7] = nextBusLabel;
+  values[matchIndex][8] = nextColorLabel;
+
+  var updatedRegs = parseRegistrationsFromValues_(values);
+  rebuildSummarySheet_(ss, updatedRegs);
+
+  return jsonOutput_({
+    ok: true,
+    success: true,
+    registrations: updatedRegs,
+    availability: buildAvailabilityPayload_(updatedRegs, limits),
+    stats: buildAdminStatsPayload_(updatedRegs),
+    capacities: limits,
   });
 }
 

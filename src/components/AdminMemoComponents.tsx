@@ -14,6 +14,9 @@ import {
   COLOR_GROUP_LIST,
   LABELS,
   PAYMENT_METHOD_LIST,
+  type BusKey,
+  type ColorGroupKey,
+  type MemberRecord,
   type RegistrationRecord,
 } from '../types/trip';
 import {
@@ -107,6 +110,31 @@ interface AdminCapacityBoardProps {
   capacities: CapacityCounts;
 }
 
+const NEAR_CAPACITY_THRESHOLD_PCT = 80;
+
+function getCapacityIndicator(confirmed: number, limit: number, isFull: boolean) {
+  const fillPct =
+    limit > 0 ? Math.min(100, Math.round((confirmed / limit) * 100)) : confirmed > 0 ? 100 : 0;
+  const isNearFull = !isFull && fillPct >= NEAR_CAPACITY_THRESHOLD_PCT;
+  const isWarning = isFull || isNearFull;
+
+  let badgeClass = 'border-emerald-200 bg-emerald-50 text-emerald-800';
+  let statusText = `${fillPct}%`;
+
+  if (isFull) {
+    badgeClass = 'border-red-700 bg-red-600 text-white';
+    statusText = `${fillPct}% · مكتمل`;
+  } else if (isNearFull) {
+    badgeClass = 'border-red-300 bg-red-100 text-red-800';
+    statusText = `${fillPct}% · اقترب من الاكتمال`;
+  } else if (fillPct >= 50) {
+    badgeClass = 'border-amber-200 bg-amber-50 text-amber-800';
+    statusText = `${fillPct}%`;
+  }
+
+  return { fillPct, isNearFull, isWarning, badgeClass, statusText };
+}
+
 export const AdminCapacityBoard = memo(function AdminCapacityBoard({
   capacities,
 }: AdminCapacityBoardProps) {
@@ -116,6 +144,26 @@ export const AdminCapacityBoard = memo(function AdminCapacityBoard({
     capacities.colors.black.limit +
     capacities.colors.yellow.limit +
     capacities.colors.green.limit;
+
+  const warningItems: { label: string; pct: number; isFull: boolean }[] = [];
+  for (const bus of BUS_LIST) {
+    const stat = capacities.buses[bus.key];
+    const ind = getCapacityIndicator(stat.confirmed, stat.limit, stat.isFull);
+    if (ind.isWarning) {
+      warningItems.push({ label: bus.label, pct: ind.fillPct, isFull: stat.isFull });
+    }
+  }
+  for (const group of COLOR_GROUP_LIST) {
+    const stat = capacities.colors[group.key];
+    const ind = getCapacityIndicator(stat.confirmed, stat.limit, stat.isFull);
+    if (ind.isWarning) {
+      warningItems.push({
+        label: `قروب ${LABELS.colors[group.key]}`,
+        pct: ind.fillPct,
+        isFull: stat.isFull,
+      });
+    }
+  }
 
   return (
     <div className="rounded-xl border border-[#E4DDD2] bg-white p-5">
@@ -128,17 +176,61 @@ export const AdminCapacityBoard = memo(function AdminCapacityBoard({
         </span>
       </div>
 
+      {warningItems.length > 0 && (
+        <div
+          role="status"
+          className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-red-200 bg-red-50/80 px-3.5 py-2.5 text-xs text-red-900"
+        >
+          <span className="inline-flex items-center gap-1.5 font-extrabold text-red-800">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-red-600" />
+            <span>تنبيه امتلاء السعة:</span>
+          </span>
+          {warningItems.map((item) => (
+            <span
+              key={item.label}
+              className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono-num text-[11px] font-bold tabular-nums ${
+                item.isFull
+                  ? 'border-red-700 bg-red-600 text-white'
+                  : 'border-red-300 bg-white text-red-800'
+              }`}
+            >
+              <span>{item.label}</span>
+              <span>({item.pct}%)</span>
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
         {BUS_LIST.map((bus) => {
           const stat = capacities.buses[bus.key];
-          const fillPct = stat.limit > 0 ? Math.min(100, (stat.confirmed / stat.limit) * 100) : 100;
+          const ind = getCapacityIndicator(stat.confirmed, stat.limit, stat.isFull);
           return (
-            <div key={bus.key} className="rounded-lg border border-[#ECE6DC] bg-[#FAF8F4] p-4">
-              <div className="flex items-center justify-between text-sm">
-                <strong className="text-[#1E1A16]">{bus.label}</strong>
+            <div
+              key={bus.key}
+              className={`rounded-lg border p-4 transition-colors ${
+                ind.isWarning
+                  ? 'border-red-300 bg-red-50/45'
+                  : 'border-[#ECE6DC] bg-[#FAF8F4]'
+              }`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <strong className="text-[#1E1A16]">{bus.label}</strong>
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono-num text-[11px] font-extrabold tabular-nums ${ind.badgeClass}`}
+                  >
+                    {ind.isWarning && <AlertTriangle className="h-3 w-3 shrink-0" />}
+                    <span>{ind.statusText}</span>
+                  </span>
+                </div>
                 <span
                   className={`font-mono-num text-xs font-bold tabular-nums ${
-                    stat.isFull ? 'text-red-700' : 'text-emerald-700'
+                    stat.isFull
+                      ? 'text-red-700'
+                      : ind.isNearFull
+                        ? 'text-red-700'
+                        : 'text-emerald-700'
                   }`}
                 >
                   {stat.isFull
@@ -149,9 +241,13 @@ export const AdminCapacityBoard = memo(function AdminCapacityBoard({
               <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-[#E6DFD3]">
                 <div
                   className={`h-full transition-all duration-300 ${
-                    stat.isFull ? 'bg-red-600' : 'bg-[#9A5B25]'
+                    stat.isFull
+                      ? 'bg-red-600'
+                      : ind.isNearFull
+                        ? 'bg-red-500'
+                        : 'bg-[#9A5B25]'
                   }`}
-                  style={{ width: `${fillPct}%` }}
+                  style={{ width: `${ind.fillPct}%` }}
                 />
               </div>
               <p className="mt-2 text-xs text-[#6B6155] tabular-nums">
@@ -166,27 +262,53 @@ export const AdminCapacityBoard = memo(function AdminCapacityBoard({
       <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {COLOR_GROUP_LIST.map((group) => {
           const stat = capacities.colors[group.key];
-          const fillPct = stat.limit > 0 ? Math.min(100, (stat.confirmed / stat.limit) * 100) : 100;
+          const ind = getCapacityIndicator(stat.confirmed, stat.limit, stat.isFull);
           return (
-            <div key={group.key} className="rounded-lg border border-[#ECE6DC] bg-[#FAF8F4] p-3.5">
+            <div
+              key={group.key}
+              className={`rounded-lg border p-3.5 transition-colors ${
+                ind.isWarning
+                  ? 'border-red-300 bg-red-50/45'
+                  : 'border-[#ECE6DC] bg-[#FAF8F4]'
+              }`}
+            >
               <div className="flex items-center justify-between gap-1.5 text-xs">
                 <span className="flex items-center gap-1.5 font-bold text-[#1E1A16]">
-                  <span className={`h-2.5 w-2.5 rounded-xs ${group.swatchClass}`} />
+                  <span className={`h-2.5 w-2.5 shrink-0 rounded-xs ${group.swatchClass}`} />
                   <span>قروب {LABELS.colors[group.key]}</span>
                 </span>
                 <span
                   className={`font-mono-num font-bold tabular-nums ${
-                    stat.isFull ? 'text-red-700' : 'text-[#4E463D]'
+                    ind.isWarning ? 'text-red-700' : 'text-[#4E463D]'
                   }`}
                 >
-                  {stat.isFull ? `القروب اكتمل (${stat.confirmed}/${stat.limit})` : `${stat.confirmed}/${stat.limit}`}
+                  {stat.confirmed}/{stat.limit}
                 </span>
               </div>
+
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-1">
+                <span
+                  className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono-num text-[10px] font-extrabold tabular-nums ${ind.badgeClass}`}
+                >
+                  {ind.isWarning && <AlertTriangle className="h-2.5 w-2.5 shrink-0" />}
+                  <span>{ind.statusText}</span>
+                </span>
+                {stat.isFull && (
+                  <span className="text-[10px] font-extrabold text-red-700">القروب اكتمل</span>
+                )}
+              </div>
+
               <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#E6DFD3]">
                 <div
-                  className={`h-full ${stat.isFull ? 'bg-red-600' : group.swatchClass}`}
+                  className={`h-full transition-all duration-300 ${
+                    stat.isFull
+                      ? 'bg-red-600'
+                      : ind.isNearFull
+                        ? 'bg-red-500'
+                        : group.swatchClass
+                  }`}
                   style={{
-                    width: `${fillPct}%`,
+                    width: `${ind.fillPct}%`,
                   }}
                 />
               </div>
@@ -203,12 +325,20 @@ export const AdminCapacityBoard = memo(function AdminCapacityBoard({
 
 interface RegistrationTableRowProps {
   reg: RegistrationRecord;
+  capacities: CapacityCounts;
   duplicateNameCounts: Map<string, number>;
   duplicatePhoneCounts: Map<string, number>;
   deletingMemberId: string | null;
   deletingRegId: number | null;
   onQuickFilterText: (query: string) => void;
   onUpdateMemberName: (regId: number, memberId: string, newName: string) => Promise<string | null>;
+  onTransferMember: (
+    regId: number,
+    memberId: string,
+    newBus: BusKey,
+    newColor: ColorGroupKey
+  ) => Promise<string | null>;
+  onTransferSuccess?: (message: string) => void;
   onToggleMemberPaid: (regId: number, memberId: string) => void;
   onToggleMemberCancelled: (regId: number, memberId: string) => void;
   onApproveAllInReg: (regId: number) => void;
@@ -219,12 +349,15 @@ interface RegistrationTableRowProps {
 
 export const RegistrationTableRow = memo(function RegistrationTableRow({
   reg,
+  capacities,
   duplicateNameCounts,
   duplicatePhoneCounts,
   deletingMemberId,
   deletingRegId,
   onQuickFilterText,
   onUpdateMemberName,
+  onTransferMember,
+  onTransferSuccess,
   onToggleMemberPaid,
   onToggleMemberCancelled,
   onApproveAllInReg,
@@ -237,6 +370,12 @@ export const RegistrationTableRow = memo(function RegistrationTableRow({
   const [editError, setEditError] = useState('');
   const [isSavingName, setIsSavingName] = useState(false);
 
+  const [transferringMemberId, setTransferringMemberId] = useState<string | null>(null);
+  const [transferBusDraft, setTransferBusDraft] = useState<BusKey>('bus1');
+  const [transferColorDraft, setTransferColorDraft] = useState<ColorGroupKey>('pink');
+  const [transferError, setTransferError] = useState('');
+  const [isSavingTransfer, setIsSavingTransfer] = useState(false);
+
   const isDeletingThisReg = deletingRegId === reg.id;
 
   const summary = getRegSummary(reg);
@@ -247,6 +386,8 @@ export const RegistrationTableRow = memo(function RegistrationTableRow({
   const colorMeta = COLOR_GROUP_LIST.find((c) => c.key === primaryColor);
 
   const startEditingMember = (memberId: string, currentName: string) => {
+    setTransferringMemberId(null);
+    setTransferError('');
     setEditingMemberId(memberId);
     setEditNameDraft(currentName);
     setEditError('');
@@ -257,6 +398,54 @@ export const RegistrationTableRow = memo(function RegistrationTableRow({
     setEditingMemberId(null);
     setEditNameDraft('');
     setEditError('');
+  };
+
+  const startTransferringMember = (member: MemberRecord) => {
+    if (isSavingTransfer) return;
+    if (transferringMemberId === member.id) {
+      setTransferringMemberId(null);
+      setTransferError('');
+      return;
+    }
+    setEditingMemberId(null);
+    setEditError('');
+    setTransferringMemberId(member.id);
+    setTransferBusDraft(getMemberBus(member, reg));
+    setTransferColorDraft(getMemberColor(member, reg));
+    setTransferError('');
+  };
+
+  const cancelTransferringMember = () => {
+    if (isSavingTransfer) return;
+    setTransferringMemberId(null);
+    setTransferError('');
+  };
+
+  const handleSaveTransfer = async (member: MemberRecord) => {
+    if (isSavingTransfer) return;
+    const currentBus = getMemberBus(member, reg);
+    const currentColor = getMemberColor(member, reg);
+
+    if (transferBusDraft === currentBus && transferColorDraft === currentColor) {
+      setTransferringMemberId(null);
+      setTransferError('');
+      return;
+    }
+
+    setIsSavingTransfer(true);
+    setTransferError('');
+    try {
+      const err = await onTransferMember(reg.id, member.id, transferBusDraft, transferColorDraft);
+      if (err) {
+        setTransferError(err);
+      } else {
+        setTransferringMemberId(null);
+        setTransferError('');
+        onTransferSuccess?.('تم نقل الفرد وتحديث المقاعد بنجاح');
+      }
+    } finally {
+      setIsSavingTransfer(false);
+    }
   };
 
   const handleSaveMemberName = async (memberId: string, originalName: string) => {
@@ -339,11 +528,15 @@ export const RegistrationTableRow = memo(function RegistrationTableRow({
             const isDuplicateName = nameDupCount > 1;
             const isDuplicatePhone = phoneDupCount > 1;
             const isMemberDuplicate = isDuplicateName || isDuplicatePhone;
+            const mBus = getMemberBus(m, reg);
+            const mColor = getMemberColor(m, reg);
+            const mColorMeta = COLOR_GROUP_LIST.find((c) => c.key === mColor);
+            const isTransferringThisMember = transferringMemberId === m.id && !m.cancelled;
 
             return (
               <div
                 key={m.id}
-                className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 ${
+                className={`rounded-lg border px-3 py-2 ${
                   isMemberDuplicate
                     ? 'border-red-500 bg-red-100/75 ring-1 ring-red-300'
                     : m.cancelled
@@ -353,251 +546,381 @@ export const RegistrationTableRow = memo(function RegistrationTableRow({
                         : 'border-[#E6DFD3] bg-white'
                 }`}
               >
-                <div className="min-w-0 flex-1">
-                  {editingMemberId === m.id ? (
-                    <div className="space-y-1.5">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <input
-                          type="text"
-                          value={editNameDraft}
-                          disabled={isSavingName}
-                          autoFocus
-                          onChange={(e) => {
-                            setEditNameDraft(e.target.value);
-                            if (editError) setEditError('');
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              void handleSaveMemberName(m.id, m.name);
-                            } else if (e.key === 'Escape') {
-                              e.preventDefault();
-                              cancelEditingMember();
-                            }
-                          }}
-                          placeholder="اكتب الاسم الثلاثي..."
-                          aria-label="تعديل اسم الفرد"
-                          className={`min-w-[190px] flex-1 rounded-md border bg-white px-2.5 py-1 text-sm font-semibold text-[#1E1A16] focus:outline-none ${
-                            editError
-                              ? 'border-red-500 focus:border-red-600'
-                              : 'border-[#9A5B25] focus:border-[#7C4518]'
-                          }`}
-                        />
-                        <button
-                          type="button"
-                          disabled={isSavingName}
-                          onClick={() => void handleSaveMemberName(m.id, m.name)}
-                          className="inline-flex items-center gap-1 rounded-md bg-emerald-700 px-2.5 py-1 text-xs font-bold text-white transition-colors hover:bg-emerald-800 disabled:opacity-60 whitespace-nowrap cursor-pointer"
-                        >
-                          {isSavingName ? (
-                            <>
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                              <span>جارٍ الحفظ...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Check className="h-3 w-3" />
-                              <span>حفظ</span>
-                            </>
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={isSavingName}
-                          onClick={cancelEditingMember}
-                          className="inline-flex items-center gap-1 rounded-md border border-[#D4CBBF] bg-white px-2 py-1 text-xs font-semibold text-[#5C5349] transition-colors hover:bg-[#F5F1E9] disabled:opacity-50 whitespace-nowrap cursor-pointer"
-                        >
-                          <X className="h-3 w-3" />
-                          <span>إلغاء</span>
-                        </button>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    {editingMemberId === m.id ? (
+                      <div className="space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <input
+                            type="text"
+                            value={editNameDraft}
+                            disabled={isSavingName}
+                            autoFocus
+                            onChange={(e) => {
+                              setEditNameDraft(e.target.value);
+                              if (editError) setEditError('');
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                void handleSaveMemberName(m.id, m.name);
+                              } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                cancelEditingMember();
+                              }
+                            }}
+                            placeholder="اكتب الاسم الثلاثي..."
+                            aria-label="تعديل اسم الفرد"
+                            className={`min-w-[190px] flex-1 rounded-md border bg-white px-2.5 py-1 text-sm font-semibold text-[#1E1A16] focus:outline-none ${
+                              editError
+                                ? 'border-red-500 focus:border-red-600'
+                                : 'border-[#9A5B25] focus:border-[#7C4518]'
+                            }`}
+                          />
+                          <button
+                            type="button"
+                            disabled={isSavingName}
+                            onClick={() => void handleSaveMemberName(m.id, m.name)}
+                            className="inline-flex items-center gap-1 rounded-md bg-emerald-700 px-2.5 py-1 text-xs font-bold text-white transition-colors hover:bg-emerald-800 disabled:opacity-60 whitespace-nowrap cursor-pointer"
+                          >
+                            {isSavingName ? (
+                              <>
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                <span>جارٍ الحفظ...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Check className="h-3 w-3" />
+                                <span>حفظ</span>
+                              </>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isSavingName}
+                            onClick={cancelEditingMember}
+                            className="inline-flex items-center gap-1 rounded-md border border-[#D4CBBF] bg-white px-2 py-1 text-xs font-semibold text-[#5C5349] transition-colors hover:bg-[#F5F1E9] disabled:opacity-50 whitespace-nowrap cursor-pointer"
+                          >
+                            <X className="h-3 w-3" />
+                            <span>إلغاء</span>
+                          </button>
+                        </div>
+                        {editError && (
+                          <p
+                            role="alert"
+                            className="flex items-start gap-1 text-xs font-semibold text-red-700"
+                          >
+                            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <span>{editError}</span>
+                          </p>
+                        )}
                       </div>
-                      {editError && (
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <p
-                          role="alert"
-                          className="flex items-start gap-1 text-xs font-semibold text-red-700"
+                          className={`text-sm font-bold ${
+                            isDuplicateName
+                              ? `rounded bg-red-200/90 px-1.5 py-0.5 text-red-950 ${
+                                  m.cancelled ? 'line-through' : ''
+                                }`
+                              : m.cancelled
+                                ? 'text-red-700 line-through'
+                                : 'text-[#1E1A16]'
+                          }`}
                         >
-                          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                          <span>{editError}</span>
+                          {m.name}
                         </p>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <p
-                        className={`text-sm font-bold ${
-                          isDuplicateName
-                            ? `rounded bg-red-200/90 px-1.5 py-0.5 text-red-950 ${
-                                m.cancelled ? 'line-through' : ''
-                              }`
-                            : m.cancelled
-                              ? 'text-red-700 line-through'
-                              : 'text-[#1E1A16]'
-                        }`}
-                      >
-                        {m.name}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => startEditingMember(m.id, m.name)}
-                        title="تعديل الاسم"
-                        aria-label={`تعديل اسم ${m.name}`}
-                        className="inline-flex items-center gap-1 rounded border border-[#DFD5C7] bg-[#FAF8F4] px-1.5 py-0.5 text-[11px] font-semibold text-[#6B5A46] transition-colors hover:border-[#9A5B25]/50 hover:bg-[#F5ECE0] hover:text-[#7C4518] whitespace-nowrap cursor-pointer"
-                      >
-                        <Pencil className="h-2.5 w-2.5" />
-                        <span>تعديل</span>
-                      </button>
-                      {m.isMain && (
-                        <span className="text-xs font-normal text-[#6B6155]">(الرئيسي)</span>
-                      )}
-                      {isDuplicateName && (
                         <button
                           type="button"
-                          onClick={() => onQuickFilterText(m.name)}
-                          title="اضغط لعرض كل الحجوزات التي تحمل هذا الاسم ومقارنتها"
+                          onClick={() => startEditingMember(m.id, m.name)}
+                          title="تعديل الاسم"
+                          aria-label={`تعديل اسم ${m.name}`}
+                          className="inline-flex items-center gap-1 rounded border border-[#DFD5C7] bg-[#FAF8F4] px-1.5 py-0.5 text-[11px] font-semibold text-[#6B5A46] transition-colors hover:border-[#9A5B25]/50 hover:bg-[#F5ECE0] hover:text-[#7C4518] whitespace-nowrap cursor-pointer"
+                        >
+                          <Pencil className="h-2.5 w-2.5" />
+                          <span>تعديل</span>
+                        </button>
+                        {!m.cancelled && (
+                          <button
+                            type="button"
+                            disabled={isDeletingThisReg}
+                            onClick={() => startTransferringMember(m)}
+                            title="نقل الفرد لباص أو قروب لوني آخر"
+                            aria-label={`نقل ${m.name} لباص أو قروب لوني آخر`}
+                            className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-bold transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50 ${
+                              isTransferringThisMember
+                                ? 'border-[#9A5B25] bg-[#9A5B25] text-white'
+                                : 'border-[#D9C7B0] bg-[#FAF5EC] text-[#7C4518] hover:border-[#9A5B25] hover:bg-[#F3E5D3]'
+                            }`}
+                          >
+                            <span>نقل 🔄</span>
+                          </button>
+                        )}
+                        {m.isMain && (
+                          <span className="text-xs font-normal text-[#6B6155]">(الرئيسي)</span>
+                        )}
+                        {isDuplicateName && (
+                          <button
+                            type="button"
+                            onClick={() => onQuickFilterText(m.name)}
+                            title="اضغط لعرض كل الحجوزات التي تحمل هذا الاسم ومقارنتها"
+                            className="inline-flex items-center gap-1 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-extrabold text-white transition-colors hover:bg-red-700 whitespace-nowrap cursor-pointer"
+                          >
+                            <AlertTriangle className="h-3 w-3 shrink-0" />
+                            <span>اسم مكرر (×{nameDupCount})</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#5C5349]">
+                      <span
+                        className={`font-mono-num ${
+                          isDuplicatePhone
+                            ? 'rounded bg-red-200/90 px-1.5 py-0.5 font-extrabold text-red-950'
+                            : ''
+                        }`}
+                        dir="ltr"
+                      >
+                        {m.phone}
+                      </span>
+                      {isDuplicatePhone && (
+                        <button
+                          type="button"
+                          onClick={() => onQuickFilterText(m.phone)}
+                          title="اضغط لعرض كل الحجوزات التي تحمل هذا الرقم ومقارنتها"
                           className="inline-flex items-center gap-1 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-extrabold text-white transition-colors hover:bg-red-700 whitespace-nowrap cursor-pointer"
                         >
                           <AlertTriangle className="h-3 w-3 shrink-0" />
-                          <span>اسم مكرر (×{nameDupCount})</span>
+                          <span>رقم مكرر (×{phoneDupCount})</span>
                         </button>
                       )}
+                      <span aria-hidden="true">·</span>
+                      <span
+                        className={`font-bold ${
+                          m.cancelled
+                            ? 'text-red-700'
+                            : m.paid
+                              ? 'text-emerald-700'
+                              : 'text-amber-700'
+                        }`}
+                      >
+                        {m.cancelled ? 'ملغي' : m.paid ? 'مدفوع' : 'لم يدفع'}
+                      </span>
+                      {(() => {
+                        const memberAge = calculateAgeFromBirthDate(m.birthDate);
+                        if (memberAge === null) return null;
+                        return (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span
+                              title={m.birthDate ? `تاريخ الميلاد: ${m.birthDate}` : undefined}
+                              className="inline-flex items-center rounded border border-[#E4DDD2] bg-[#FAF8F4] px-1.5 py-0.5 text-[11px] font-bold text-[#7C4518]"
+                            >
+                              العمر: {formatAgeArabic(memberAge)}
+                            </span>
+                          </>
+                        );
+                      })()}
+                      <span aria-hidden="true">·</span>
+                      <span
+                        className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-semibold ${
+                          mColorMeta
+                            ? mColorMeta.badgeClass
+                            : 'border-[#E4DDD2] bg-[#FAF8F4] text-[#1E1A16]'
+                        }`}
+                      >
+                        <span>{LABELS.buses[mBus]}</span>
+                        <span aria-hidden="true">•</span>
+                        {mColorMeta && (
+                          <span className={`h-2 w-2 rounded-xs ${mColorMeta.swatchClass}`} />
+                        )}
+                        <span>{LABELS.colors[mColor]}</span>
+                      </span>
                     </div>
-                  )}
-                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#5C5349]">
-                    <span
-                      className={`font-mono-num ${
-                        isDuplicatePhone
-                          ? 'rounded bg-red-200/90 px-1.5 py-0.5 font-extrabold text-red-950'
-                          : ''
-                      }`}
-                      dir="ltr"
-                    >
-                      {m.phone}
-                    </span>
-                    {isDuplicatePhone && (
+                  </div>
+
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                    {!m.cancelled && (
                       <button
                         type="button"
-                        onClick={() => onQuickFilterText(m.phone)}
-                        title="اضغط لعرض كل الحجوزات التي تحمل هذا الرقم ومقارنتها"
-                        className="inline-flex items-center gap-1 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-extrabold text-white transition-colors hover:bg-red-700 whitespace-nowrap cursor-pointer"
+                        onClick={() => onToggleMemberPaid(reg.id, m.id)}
+                        className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold text-white transition-colors whitespace-nowrap cursor-pointer ${
+                          m.paid
+                            ? 'bg-amber-600 hover:bg-amber-700'
+                            : 'bg-emerald-700 hover:bg-emerald-800'
+                        }`}
                       >
-                        <AlertTriangle className="h-3 w-3 shrink-0" />
-                        <span>رقم مكرر (×{phoneDupCount})</span>
+                        {m.paid ? (
+                          <span>إلغاء الدفع</span>
+                        ) : (
+                          <>
+                            <Check className="h-3.5 w-3.5" />
+                            <span>تأكيد دفع</span>
+                          </>
+                        )}
                       </button>
                     )}
-                    <span aria-hidden="true">·</span>
-                    <span
-                      className={`font-bold ${
-                        m.cancelled
-                          ? 'text-red-700'
-                          : m.paid
-                            ? 'text-emerald-700'
-                            : 'text-amber-700'
-                      }`}
-                    >
-                      {m.cancelled ? 'ملغي' : m.paid ? 'مدفوع' : 'لم يدفع'}
-                    </span>
-                    {(() => {
-                      const memberAge = calculateAgeFromBirthDate(m.birthDate);
-                      if (memberAge === null) return null;
-                      return (
-                        <>
-                          <span aria-hidden="true">·</span>
-                          <span
-                            title={m.birthDate ? `تاريخ الميلاد: ${m.birthDate}` : undefined}
-                            className="inline-flex items-center rounded border border-[#E4DDD2] bg-[#FAF8F4] px-1.5 py-0.5 text-[11px] font-bold text-[#7C4518]"
-                          >
-                            العمر: {formatAgeArabic(memberAge)}
-                          </span>
-                        </>
-                      );
-                    })()}
-                    {reg.isGroup && (() => {
-                      const mBus = getMemberBus(m, reg);
-                      const mColor = getMemberColor(m, reg);
-                      const mColorMeta = COLOR_GROUP_LIST.find((c) => c.key === mColor);
-                      return (
-                        <>
-                          <span aria-hidden="true">·</span>
-                          <span
-                            className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-semibold ${
-                              mColorMeta
-                                ? mColorMeta.badgeClass
-                                : 'border-[#E4DDD2] bg-[#FAF8F4] text-[#1E1A16]'
-                            }`}
-                          >
-                            <span>{LABELS.buses[mBus]}</span>
-                            <span aria-hidden="true">·</span>
-                            {mColorMeta && (
-                              <span className={`h-2 w-2 rounded-xs ${mColorMeta.swatchClass}`} />
-                            )}
-                            <span>قروب {LABELS.colors[mColor]}</span>
-                          </span>
-                        </>
-                      );
-                    })()}
+
+                    {m.cancelled ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={isDeletingThisMember || isDeletingThisReg}
+                          onClick={() => onToggleMemberCancelled(reg.id, m.id)}
+                          className="inline-flex items-center gap-1 rounded-md bg-sky-700 px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-sky-800 disabled:opacity-50 whitespace-nowrap cursor-pointer"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          <span>استرجاع</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isDeletingThisMember || isDeletingThisReg}
+                          onClick={() => onRequestDeleteMember(reg.id, m.id, m.name)}
+                          className="inline-flex items-center gap-1 rounded-md bg-red-900 px-2.5 py-1 text-xs font-bold text-white transition-colors hover:bg-red-950 disabled:opacity-60 whitespace-nowrap cursor-pointer"
+                        >
+                          {isDeletingThisMember ? (
+                            <>
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              <span>جارٍ المسح...</span>
+                            </>
+                          ) : (
+                            <span>مسح نهائي 🗑️</span>
+                          )}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={isDeletingThisReg}
+                        onClick={() => onToggleMemberCancelled(reg.id, m.id)}
+                        className="inline-flex items-center gap-1 rounded-md bg-red-700 px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-red-800 disabled:opacity-50 whitespace-nowrap cursor-pointer"
+                      >
+                        <span>إلغاء ✕</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
-                <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-                  {!m.cancelled && (
-                    <button
-                      type="button"
-                      onClick={() => onToggleMemberPaid(reg.id, m.id)}
-                      className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold text-white transition-colors whitespace-nowrap cursor-pointer ${
-                        m.paid
-                          ? 'bg-amber-600 hover:bg-amber-700'
-                          : 'bg-emerald-700 hover:bg-emerald-800'
-                      }`}
-                    >
-                      {m.paid ? (
-                        <span>إلغاء الدفع</span>
-                      ) : (
-                        <>
-                          <Check className="h-3.5 w-3.5" />
-                          <span>تأكيد دفع</span>
-                        </>
-                      )}
-                    </button>
-                  )}
+                {/* Inline Transfer Panel (Bus / Color Group) */}
+                {isTransferringThisMember && (
+                  <div className="mt-2.5 space-y-2 rounded-lg border border-[#DEC9AE] bg-[#FAF6F0] p-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[11px] font-extrabold text-[#7C4518]">
+                        نقل الفرد (الباص / القروب اللوني):
+                      </p>
+                      <span className="text-[11px] text-[#6B6155]">
+                        الحالي: {LABELS.buses[mBus]} • قروب {LABELS.colors[mColor]}
+                      </span>
+                    </div>
 
-                  {m.cancelled ? (
-                    <>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div>
+                        <label
+                          htmlFor={`transfer-bus-${m.id}`}
+                          className="mb-1 block text-[11px] font-bold text-[#4E463D]"
+                        >
+                          الباص الجديد
+                        </label>
+                        <select
+                          id={`transfer-bus-${m.id}`}
+                          disabled={isSavingTransfer}
+                          value={transferBusDraft}
+                          onChange={(e) => {
+                            setTransferBusDraft(e.target.value as BusKey);
+                            if (transferError) setTransferError('');
+                          }}
+                          className="w-full rounded-md border border-[#D4CBBF] bg-white px-2.5 py-1.5 text-xs font-semibold text-[#1E1A16] focus:border-[#9A5B25] focus:outline-none disabled:opacity-60"
+                        >
+                          {BUS_LIST.map((bus) => {
+                            const bStat = capacities.buses[bus.key];
+                            const isCurrent = bus.key === mBus;
+                            const statusPart = bStat.isFull
+                              ? 'ممتلئ'
+                              : `متبقي ${bStat.remaining}`;
+                            return (
+                              <option key={bus.key} value={bus.key}>
+                                {bus.label} ({isCurrent ? `الحالي · ${statusPart}` : statusPart})
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor={`transfer-color-${m.id}`}
+                          className="mb-1 block text-[11px] font-bold text-[#4E463D]"
+                        >
+                          القروب اللوني الجديد
+                        </label>
+                        <select
+                          id={`transfer-color-${m.id}`}
+                          disabled={isSavingTransfer}
+                          value={transferColorDraft}
+                          onChange={(e) => {
+                            setTransferColorDraft(e.target.value as ColorGroupKey);
+                            if (transferError) setTransferError('');
+                          }}
+                          className="w-full rounded-md border border-[#D4CBBF] bg-white px-2.5 py-1.5 text-xs font-semibold text-[#1E1A16] focus:border-[#9A5B25] focus:outline-none disabled:opacity-60"
+                        >
+                          {COLOR_GROUP_LIST.map((group) => {
+                            const cStat = capacities.colors[group.key];
+                            const isCurrent = group.key === mColor;
+                            const statusPart = cStat.isFull
+                              ? 'ممتلئ'
+                              : `متبقي ${cStat.remaining}`;
+                            return (
+                              <option key={group.key} value={group.key}>
+                                قروب {LABELS.colors[group.key]} (
+                                {isCurrent ? `الحالي · ${statusPart}` : statusPart})
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+                    </div>
+
+                    {transferError && (
+                      <p
+                        role="alert"
+                        className="flex items-start gap-1.5 rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700"
+                      >
+                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>{transferError}</span>
+                      </p>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-end gap-1.5 pt-0.5">
                       <button
                         type="button"
-                        disabled={isDeletingThisMember || isDeletingThisReg}
-                        onClick={() => onToggleMemberCancelled(reg.id, m.id)}
-                        className="inline-flex items-center gap-1 rounded-md bg-sky-700 px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-sky-800 disabled:opacity-50 whitespace-nowrap cursor-pointer"
+                        disabled={isSavingTransfer}
+                        onClick={cancelTransferringMember}
+                        className="inline-flex items-center gap-1 rounded-md border border-[#D4CBBF] bg-white px-2.5 py-1 text-xs font-semibold text-[#5C5349] transition-colors hover:bg-[#F5F1E9] disabled:opacity-50 whitespace-nowrap cursor-pointer"
                       >
-                        <RotateCcw className="h-3 w-3" />
-                        <span>استرجاع</span>
+                        <X className="h-3 w-3" />
+                        <span>إلغاء</span>
                       </button>
                       <button
                         type="button"
-                        disabled={isDeletingThisMember || isDeletingThisReg}
-                        onClick={() => onRequestDeleteMember(reg.id, m.id, m.name)}
-                        className="inline-flex items-center gap-1 rounded-md bg-red-900 px-2.5 py-1 text-xs font-bold text-white transition-colors hover:bg-red-950 disabled:opacity-60 whitespace-nowrap cursor-pointer"
+                        disabled={isSavingTransfer}
+                        onClick={() => void handleSaveTransfer(m)}
+                        className="inline-flex items-center gap-1 rounded-md bg-[#9A5B25] px-3 py-1 text-xs font-bold text-white transition-colors hover:bg-[#7C4518] disabled:opacity-60 whitespace-nowrap cursor-pointer"
                       >
-                        {isDeletingThisMember ? (
+                        {isSavingTransfer ? (
                           <>
                             <Loader2 className="h-3 w-3 animate-spin" />
-                            <span>جارٍ المسح...</span>
+                            <span>جارٍ حفظ النقل...</span>
                           </>
                         ) : (
-                          <span>مسح نهائي 🗑️</span>
+                          <>
+                            <Check className="h-3 w-3" />
+                            <span>حفظ النقل</span>
+                          </>
                         )}
                       </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={isDeletingThisReg}
-                      onClick={() => onToggleMemberCancelled(reg.id, m.id)}
-                      className="inline-flex items-center gap-1 rounded-md bg-red-700 px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-red-800 disabled:opacity-50 whitespace-nowrap cursor-pointer"
-                    >
-                      <span>إلغاء ✕</span>
-                    </button>
-                  )}
-                </div>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}

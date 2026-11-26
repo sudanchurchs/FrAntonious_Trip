@@ -63,6 +63,7 @@ export function normalizeColorGroupKey(raw: unknown): ColorGroupKey {
 
 export function normalizeRegistrationRecord(reg: RegistrationRecord): RegistrationRecord {
   const migratedPinkMembers = getMigratedPinkMemberSet();
+  const fallbackBus: BusKey = reg.bus === 'bus2' ? 'bus2' : 'bus1';
   const normalizedMembers = reg.members.map((member) => {
     const rawColor = member.colorGroup ?? reg.colorGroup;
     const rawLower = String(rawColor ?? '').trim().toLowerCase();
@@ -71,17 +72,22 @@ export function normalizeRegistrationRecord(reg: RegistrationRecord): Registrati
       isMigratedPinkMember && (!rawLower || rawLower === 'red' || rawLower === 'أحمر')
         ? 'pink'
         : normalizeColorGroupKey(rawColor);
+    const nextBus: BusKey =
+      member.bus === 'bus2' ? 'bus2' : member.bus === 'bus1' ? 'bus1' : fallbackBus;
 
     return {
       ...member,
+      bus: nextBus,
       colorGroup: nextColor,
     };
   });
 
+  const primaryBus = normalizedMembers[0]?.bus ?? fallbackBus;
   const primaryColor = normalizedMembers[0]?.colorGroup ?? normalizeColorGroupKey(reg.colorGroup);
 
   return {
     ...reg,
+    bus: primaryBus,
     colorGroup: primaryColor,
     members: normalizedMembers,
   };
@@ -671,17 +677,23 @@ export function migrateLegacyRegistrations(rawList: unknown): RegistrationRecord
 
 export function exportRegistrationsToCSV(
   filtered: RegistrationRecord[],
-  filenameSuffix: string
+  filenameSuffix: string,
+  memberFilters?: { bus?: 'all' | BusKey; color?: 'all' | ColorGroupKey }
 ): void {
   let csvContent =
     '\uFEFFكود الحجز,الاسم,الهاتف,تاريخ الميلاد,العمر,الصفة,حالة الفرد,الباص,المجموعة,المستلم,طريقة الدفع,المبلغ المدفوع للفرد,التاريخ\n';
 
+  const busFilter = memberFilters?.bus ?? 'all';
+  const colorFilter = memberFilters?.color ?? 'all';
+
   for (const r of filtered) {
     for (const m of r.members) {
-      const statusText = m.cancelled ? 'ملغي' : m.paid ? 'مدفوع' : 'لم يدفع';
-      const paidAmount = !m.cancelled && m.paid ? TICKET_PRICE : 0;
       const mBus = getMemberBus(m, r);
       const mColor = getMemberColor(m, r);
+      if (busFilter !== 'all' && mBus !== busFilter) continue;
+      if (colorFilter !== 'all' && mColor !== colorFilter) continue;
+      const statusText = m.cancelled ? 'ملغي' : m.paid ? 'مدفوع' : 'لم يدفع';
+      const paidAmount = !m.cancelled && m.paid ? TICKET_PRICE : 0;
       const mAge = calculateAgeFromBirthDate(m.birthDate);
       const row = [
         r.id,
@@ -873,17 +885,22 @@ export function exportRegistrationsToExcel(
   filtered: RegistrationRecord[],
   allRegistrations: RegistrationRecord[],
   filenameSuffix: string,
-  limits: CapacityLimits = DEFAULT_CAPACITY_LIMITS
+  limits: CapacityLimits = DEFAULT_CAPACITY_LIMITS,
+  memberFilters?: { bus?: 'all' | BusKey; color?: 'all' | ColorGroupKey }
 ): void {
   const memberRows: Record<string, string | number>[] = [];
+  const busFilter = memberFilters?.bus ?? 'all';
+  const colorFilter = memberFilters?.color ?? 'all';
 
   for (const r of filtered) {
     for (const m of r.members) {
+      const mBus = getMemberBus(m, r);
+      const mColor = getMemberColor(m, r);
+      if (busFilter !== 'all' && mBus !== busFilter) continue;
+      if (colorFilter !== 'all' && mColor !== colorFilter) continue;
       const statusText = m.cancelled ? 'ملغي' : m.paid ? 'مدفوع' : 'لم يدفع';
       const paidAmount = !m.cancelled && m.paid ? TICKET_PRICE : 0;
       const remainingAmount = !m.cancelled && !m.paid ? TICKET_PRICE : 0;
-      const mBus = getMemberBus(m, r);
-      const mColor = getMemberColor(m, r);
       const mAge = calculateAgeFromBirthDate(m.birthDate);
 
       memberRows.push({

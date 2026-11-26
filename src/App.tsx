@@ -15,6 +15,7 @@ import {
   STORAGE_KEY,
   VISITOR_COUNTED_STORAGE_KEY,
   WHATSAPP_STORAGE_KEY,
+  type AvailabilityVisibilityKey,
   type CapacityLimits,
   type ColorGroupKey,
   type RecipientKey,
@@ -48,6 +49,7 @@ import {
   fetchAvailabilityFromSheets,
   fetchRegistrationsFromSheets,
   normalizeCapacityLimits,
+  normalizeTripSettings,
   toggleMemberCancelledInSheets,
   toggleMemberPaidInSheets,
   trackVisitInSheets,
@@ -108,11 +110,8 @@ function loadInitialTripSettings(): TripSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (!raw) return DEFAULT_TRIP_SETTINGS;
-    const parsed = JSON.parse(raw) as Partial<TripSettings>;
-    return {
-      showAvailability: parsed.showAvailability !== false,
-      registrationClosed: Boolean(parsed.registrationClosed),
-    };
+    const parsed = JSON.parse(raw);
+    return normalizeTripSettings(parsed) ?? DEFAULT_TRIP_SETTINGS;
   } catch {
     return DEFAULT_TRIP_SETTINGS;
   }
@@ -181,6 +180,7 @@ export default function App() {
   const syncChannelRef = useRef<BroadcastChannel | null>(null);
 
   const settingsSeqRef = useRef<number>(0);
+  const tripSettingsRef = useRef<TripSettings>(tripSettings);
   const isSavingSettingsRef = useRef<boolean>(false);
   const settingsLockUntilRef = useRef<number>(0);
   const settingsSavedTimerRef = useRef<number | null>(null);
@@ -203,14 +203,18 @@ export default function App() {
 
   const persistAndApplyTripSettings = useCallback(
     (next: TripSettings, broadcast = true) => {
-      const normalized: TripSettings = {
-        showAvailability: next.showAvailability !== false,
-        registrationClosed: Boolean(next.registrationClosed),
-      };
+      const normalized = normalizeTripSettings(next) ?? DEFAULT_TRIP_SETTINGS;
+      tripSettingsRef.current = normalized;
       setTripSettings((prev) => {
         if (
           prev.showAvailability === normalized.showAvailability &&
-          prev.registrationClosed === normalized.registrationClosed
+          prev.registrationClosed === normalized.registrationClosed &&
+          prev.availabilityVisibility.bus1 === normalized.availabilityVisibility.bus1 &&
+          prev.availabilityVisibility.bus2 === normalized.availabilityVisibility.bus2 &&
+          prev.availabilityVisibility.pink === normalized.availabilityVisibility.pink &&
+          prev.availabilityVisibility.black === normalized.availabilityVisibility.black &&
+          prev.availabilityVisibility.yellow === normalized.availabilityVisibility.yellow &&
+          prev.availabilityVisibility.green === normalized.availabilityVisibility.green
         ) {
           return prev;
         }
@@ -707,14 +711,10 @@ export default function App() {
     const handleStorageEvent = (e: StorageEvent) => {
       if (e.key === SETTINGS_STORAGE_KEY && e.newValue && !isSavingSettingsRef.current) {
         try {
-          const parsed = JSON.parse(e.newValue) as Partial<TripSettings>;
-          persistAndApplyTripSettings(
-            {
-              showAvailability: parsed.showAvailability !== false,
-              registrationClosed: Boolean(parsed.registrationClosed),
-            },
-            false
-          );
+          const parsed = normalizeTripSettings(JSON.parse(e.newValue));
+          if (parsed) {
+            persistAndApplyTripSettings(parsed, false);
+          }
         } catch {
           // ignore invalid JSON
         }
@@ -813,7 +813,7 @@ export default function App() {
 
   const handleUpdateTripSettings = useCallback(
     async (nextSettings: TripSettings) => {
-      const previousSettings = tripSettings;
+      const previousSettings = tripSettingsRef.current;
       const mySeq = ++settingsSeqRef.current;
       isSavingSettingsRef.current = true;
       settingsLockUntilRef.current = Date.now() + 5000;
@@ -877,22 +877,58 @@ export default function App() {
         }
       }
     },
-    [tripSettings, isCloudConnected, googleScriptUrl, persistAndApplyTripSettings]
+    [isCloudConnected, googleScriptUrl, persistAndApplyTripSettings]
   );
 
-  const handleToggleShowAvailability = useCallback(() => {
-    void handleUpdateTripSettings({
-      ...tripSettings,
-      showAvailability: !tripSettings.showAvailability,
-    });
-  }, [tripSettings, handleUpdateTripSettings]);
+  const handleToggleAvailabilityItem = useCallback(
+    (key: AvailabilityVisibilityKey) => {
+      const current = tripSettingsRef.current;
+      const nextVis = {
+        ...current.availabilityVisibility,
+        [key]: !current.availabilityVisibility[key],
+      };
+      const anyVisible =
+        nextVis.bus1 ||
+        nextVis.bus2 ||
+        nextVis.pink ||
+        nextVis.black ||
+        nextVis.yellow ||
+        nextVis.green;
+      void handleUpdateTripSettings({
+        ...current,
+        showAvailability: anyVisible,
+        availabilityVisibility: nextVis,
+      });
+    },
+    [handleUpdateTripSettings]
+  );
+
+  const handleSetAllAvailabilityVisibility = useCallback(
+    (visible: boolean) => {
+      const current = tripSettingsRef.current;
+      void handleUpdateTripSettings({
+        ...current,
+        showAvailability: visible,
+        availabilityVisibility: {
+          bus1: visible,
+          bus2: visible,
+          pink: visible,
+          black: visible,
+          yellow: visible,
+          green: visible,
+        },
+      });
+    },
+    [handleUpdateTripSettings]
+  );
 
   const handleToggleRegistrationClosed = useCallback(() => {
+    const current = tripSettingsRef.current;
     void handleUpdateTripSettings({
-      ...tripSettings,
-      registrationClosed: !tripSettings.registrationClosed,
+      ...current,
+      registrationClosed: !current.registrationClosed,
     });
-  }, [tripSettings, handleUpdateTripSettings]);
+  }, [handleUpdateTripSettings]);
 
   const handlePublicSubmittingChange = useCallback((submitting: boolean) => {
     isPublicSubmittingRef.current = submitting;
@@ -1701,7 +1737,7 @@ export default function App() {
             registrations={registrations}
             capacities={capacities}
             whatsappNumbers={whatsappNumbers}
-            showAvailability={tripSettings.showAvailability}
+            availabilityVisibility={tripSettings.availabilityVisibility}
             registrationClosed={tripSettings.registrationClosed}
             onSubmittingChange={handlePublicSubmittingChange}
             onRegistrationClosedDetected={handleRegistrationClosedDetected}
@@ -1719,7 +1755,8 @@ export default function App() {
             isSavingSettings={isSavingSettings}
             settingsSavedPulse={settingsSavedPulse}
             settingsSaveError={settingsSaveError}
-            onToggleShowAvailability={handleToggleShowAvailability}
+            onToggleAvailabilityItem={handleToggleAvailabilityItem}
+            onSetAllAvailabilityVisibility={handleSetAllAvailabilityVisibility}
             onToggleRegistrationClosed={handleToggleRegistrationClosed}
             visitorAnalytics={visitorAnalytics}
             isRefreshingAnalytics={isRefreshingAnalytics}

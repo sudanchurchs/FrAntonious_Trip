@@ -22,6 +22,7 @@ const SHEET_SUMMARY = 'ملخص_الحسابات';
 const SHEET_ANALYTICS = 'إحصائيات_الزيارات';
 const PROP_LAST_SEQ = 'LAST_QUEUE_SEQ_NO';
 const PROP_SHOW_AVAILABILITY = 'TRIP_SHOW_AVAILABILITY';
+const PROP_AVAILABILITY_VISIBILITY = 'TRIP_AVAILABILITY_VISIBILITY';
 const PROP_REGISTRATION_CLOSED = 'TRIP_REGISTRATION_CLOSED';
 const PROP_BASELINE_UNIQUE = 'TRIP_BASELINE_UNIQUE';
 const PROP_BASELINE_TOTAL = 'TRIP_BASELINE_TOTAL';
@@ -270,25 +271,92 @@ function syncSeqProperty_(remainingRegs) {
   props.setProperty(PROP_LAST_SEQ, String(maxSeq));
 }
 
+function normalizeAvailabilityVisibility_(rawVis, fallbackShow) {
+  var fb = fallbackShow !== false;
+  var src = rawVis && typeof rawVis === 'object' ? rawVis : null;
+  function pickBool(primary, alias) {
+    if (src && typeof src[primary] === 'boolean') return src[primary];
+    if (src && alias && typeof src[alias] === 'boolean') return src[alias];
+    return fb;
+  }
+  var bus1 = pickBool('bus1', null);
+  var bus2 = pickBool('bus2', null);
+  var pink = pickBool('pink', 'red');
+  var black = pickBool('black', 'blue');
+  var yellow = pickBool('yellow', null);
+  var green = pickBool('green', null);
+  return {
+    bus1: bus1,
+    bus2: bus2,
+    pink: pink,
+    black: black,
+    red: pink,
+    blue: black,
+    yellow: yellow,
+    green: green,
+  };
+}
+
 function getTripSettings_() {
   var props = PropertiesService.getScriptProperties();
   var rawShow = props.getProperty(PROP_SHOW_AVAILABILITY);
   var rawClosed = props.getProperty(PROP_REGISTRATION_CLOSED);
+  var rawVisStr = props.getProperty(PROP_AVAILABILITY_VISIBILITY);
+  var fallbackShow = rawShow === null ? true : rawShow !== 'false';
+
+  var parsedVis = null;
+  if (rawVisStr) {
+    try {
+      parsedVis = JSON.parse(rawVisStr);
+    } catch (err) {
+      parsedVis = null;
+    }
+  }
+
+  var availabilityVisibility = normalizeAvailabilityVisibility_(parsedVis, fallbackShow);
+  var anyVisible =
+    availabilityVisibility.bus1 ||
+    availabilityVisibility.bus2 ||
+    availabilityVisibility.pink ||
+    availabilityVisibility.black ||
+    availabilityVisibility.yellow ||
+    availabilityVisibility.green;
+
   return {
-    showAvailability: rawShow === null ? true : rawShow !== 'false',
+    showAvailability: parsedVis ? anyVisible : fallbackShow,
     registrationClosed: rawClosed === 'true',
+    availabilityVisibility: availabilityVisibility,
   };
 }
 
-function saveTripSettings_(showAvailability, registrationClosed) {
+function saveTripSettings_(showAvailability, registrationClosed, availabilityVisibility) {
   var props = PropertiesService.getScriptProperties();
   var cleanShow = showAvailability !== false;
   var cleanClosed = Boolean(registrationClosed);
-  props.setProperty(PROP_SHOW_AVAILABILITY, cleanShow ? 'true' : 'false');
-  props.setProperty(PROP_REGISTRATION_CLOSED, cleanClosed ? 'true' : 'false');
+  var vis = normalizeAvailabilityVisibility_(availabilityVisibility, cleanShow);
+  var anyVisible =
+    vis.bus1 || vis.bus2 || vis.pink || vis.black || vis.yellow || vis.green;
+  var effectiveShow = availabilityVisibility ? anyVisible : cleanShow;
+
+  props.setProperties({
+    TRIP_SHOW_AVAILABILITY: effectiveShow ? 'true' : 'false',
+    TRIP_REGISTRATION_CLOSED: cleanClosed ? 'true' : 'false',
+    TRIP_AVAILABILITY_VISIBILITY: JSON.stringify({
+      bus1: vis.bus1,
+      bus2: vis.bus2,
+      pink: vis.pink,
+      black: vis.black,
+      red: vis.pink,
+      blue: vis.black,
+      yellow: vis.yellow,
+      green: vis.green,
+    }),
+  });
+
   return {
-    showAvailability: cleanShow,
+    showAvailability: effectiveShow,
     registrationClosed: cleanClosed,
+    availabilityVisibility: vis,
   };
 }
 
@@ -788,16 +856,51 @@ function handleUpdateSettings_(payload) {
   }
 
   var current = getTripSettings_();
-  var nextShow =
-    typeof payload.showAvailability === 'boolean'
-      ? payload.showAvailability
-      : current.showAvailability;
   var nextClosed =
     typeof payload.registrationClosed === 'boolean'
       ? payload.registrationClosed
       : current.registrationClosed;
 
-  var saved = saveTripSettings_(nextShow, nextClosed);
+  var nextVis = current.availabilityVisibility;
+  var nextShow = current.showAvailability;
+
+  if (payload.availabilityVisibility && typeof payload.availabilityVisibility === 'object') {
+    var incoming = payload.availabilityVisibility;
+    var curVis = current.availabilityVisibility;
+    var nextBus1 = typeof incoming.bus1 === 'boolean' ? incoming.bus1 : curVis.bus1;
+    var nextBus2 = typeof incoming.bus2 === 'boolean' ? incoming.bus2 : curVis.bus2;
+    var nextPink =
+      typeof incoming.pink === 'boolean'
+        ? incoming.pink
+        : typeof incoming.red === 'boolean'
+          ? incoming.red
+          : curVis.pink;
+    var nextBlack =
+      typeof incoming.black === 'boolean'
+        ? incoming.black
+        : typeof incoming.blue === 'boolean'
+          ? incoming.blue
+          : curVis.black;
+    var nextYellow = typeof incoming.yellow === 'boolean' ? incoming.yellow : curVis.yellow;
+    var nextGreen = typeof incoming.green === 'boolean' ? incoming.green : curVis.green;
+
+    nextVis = {
+      bus1: nextBus1,
+      bus2: nextBus2,
+      pink: nextPink,
+      black: nextBlack,
+      red: nextPink,
+      blue: nextBlack,
+      yellow: nextYellow,
+      green: nextGreen,
+    };
+    nextShow = nextBus1 || nextBus2 || nextPink || nextBlack || nextYellow || nextGreen;
+  } else if (typeof payload.showAvailability === 'boolean') {
+    nextShow = payload.showAvailability;
+    nextVis = normalizeAvailabilityVisibility_(null, nextShow);
+  }
+
+  var saved = saveTripSettings_(nextShow, nextClosed, nextVis);
   return jsonOutput_({
     ok: true,
     success: true,
@@ -1066,7 +1169,17 @@ function handleCreate_(ss, sheet, payload) {
 
   const busKey = memberBusKeys[0];
   const colorKey = memberColorKeys[0];
-  const recipientKey = paymentKey === 'vf' ? 'fayez' : 'mekhail';
+  var rawRecipient = String(reg.recipient || payload.recipient || '').trim();
+  var explicitRecipient =
+    RECIPIENT_CODES[rawRecipient] || RECIPIENT_CODES[rawRecipient.toLowerCase()] || '';
+  var recipientKey;
+  if (paymentKey === 'instapay') {
+    recipientKey = explicitRecipient === 'fayez' ? 'fayez' : 'mekhail';
+  } else if (paymentKey === 'vf') {
+    recipientKey = explicitRecipient || 'fayez';
+  } else {
+    recipientKey = explicitRecipient || 'mekhail';
+  }
   const requestId = String(payload.requestId || reg.requestId || '').trim();
 
   // قراءة واحدة فقط للشيت
@@ -2099,6 +2212,12 @@ function rebuildSummarySheet_(ss, registrations) {
     ['قروب أسود', caps.colors.black, limits.colors.black, Math.max(0, limits.colors.black - caps.colors.black), caps.colors.black >= limits.colors.black ? 'القروب اكتمل' : 'متاح', '', ''],
     ['قروب أصفر', caps.colors.yellow, limits.colors.yellow, Math.max(0, limits.colors.yellow - caps.colors.yellow), caps.colors.yellow >= limits.colors.yellow ? 'القروب اكتمل' : 'متاح', '', ''],
     ['قروب أخضر', caps.colors.green, limits.colors.green, Math.max(0, limits.colors.green - caps.colors.green), caps.colors.green >= limits.colors.green ? 'القروب اكتمل' : 'متاح', '', ''],
+    ['', '', '', '', '', '', ''],
+    ['توزيع طرق الدفع حسب المستلم', 'المدفوع (جنيه)', 'المطلوب (جنيه)', 'عدد الأفراد النشطين', '', '', ''],
+    ['إنستا باي — ميخائيل إدور', mekhail.instapay.paid, mekhail.instapay.expected, mekhail.instapay.persons, '', '', ''],
+    ['إنستا باي — فايز فيكتور', fayez.instapay.paid, fayez.instapay.expected, fayez.instapay.persons, '', '', ''],
+    ['أورانج كاش — ميخائيل إدور', mekhail.orange.paid, mekhail.orange.expected, mekhail.orange.persons, '', '', ''],
+    ['فودافون كاش — فايز فيكتور', fayez.vf.paid, fayez.vf.expected, fayez.vf.persons, '', '', ''],
   ];
 
   summary.getRange(1, 1, rows.length, 7).setValues(rows);
@@ -2106,10 +2225,10 @@ function rebuildSummarySheet_(ss, registrations) {
   if (isNew) {
     summary.setRightToLeft(true);
     summary.getRange(1, 1).setFontWeight('bold').setFontSize(13);
-    [4, 9, 14, 18].forEach(function (rIdx) {
+    [4, 9, 14, 18, 24].forEach(function (rIdx) {
       summary.getRange(rIdx, 1, 1, 7).setFontWeight('bold').setBackground('#EFEAE1');
     });
-    summary.setColumnWidth(1, 220);
+    summary.setColumnWidth(1, 240);
     for (var c = 2; c <= 7; c++) {
       summary.setColumnWidth(c, 130);
     }

@@ -5,6 +5,7 @@ import {
   COLOR_GROUP_CAPACITY,
   COLOR_GROUP_LIST,
   DEFAULT_CAPACITY_LIMITS,
+  DEFAULT_WHATSAPP_NUMBERS,
   LABELS,
   PAYMENT_METHOD_LIST,
   PAYMENT_RECIPIENT_MAP,
@@ -547,8 +548,15 @@ export function buildWhatsAppDetails(
   data: RegistrationRecord,
   whatsappNumbers: WhatsAppConfig
 ): { url: string; message: string; phoneNum: string } {
-  const resolvedRecipient = PAYMENT_RECIPIENT_MAP[data.paymentMethod] ?? data.recipient;
-  const phoneNum = whatsappNumbers[resolvedRecipient][data.paymentMethod];
+  const resolvedRecipient: RecipientKey =
+    data.recipient === 'fayez' || data.recipient === 'mekhail'
+      ? data.recipient
+      : (PAYMENT_RECIPIENT_MAP[data.paymentMethod] ?? 'mekhail');
+  const rawPhone =
+    whatsappNumbers[resolvedRecipient]?.[data.paymentMethod] ||
+    DEFAULT_WHATSAPP_NUMBERS[resolvedRecipient][data.paymentMethod];
+  const phoneNum = rawPhone.replace(/^\+/, '');
+  const recipientName = LABELS.recipients[resolvedRecipient];
   const paymentName = LABELS.payments[data.paymentMethod];
   const mainMember = data.members[0];
   const companions = data.members.slice(1);
@@ -579,6 +587,7 @@ export function buildWhatsAppDetails(
       `عدد الأفراد: ${totalPersons}\n` +
       `تفاصيل الأفراد:\n${memberLines}\n` +
       `الإجمالي: ${totalPrice} جنيه\n` +
+      `المسؤول المستلم: ${recipientName}\n` +
       `طريقة الدفع: ${paymentName}\n` +
       `كود الحجز: ${data.id}`;
   } else {
@@ -599,6 +608,7 @@ export function buildWhatsAppDetails(
       `رقم الهاتف: ${mainMember.phone}${mainAgeLine}\n` +
       `عدد الأفراد: ${totalPersons}${companionsNames}\n` +
       `الإجمالي: ${totalPrice} جنيه\n` +
+      `المسؤول المستلم: ${recipientName}\n` +
       `طريقة الدفع: ${paymentName}\n` +
       `الباص: ${LABELS.buses[mainBus]} | المجموعة: ${LABELS.colors[mainColor]}\n` +
       `كود الحجز: ${data.id}`;

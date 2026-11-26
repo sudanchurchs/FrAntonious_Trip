@@ -29,6 +29,7 @@ import {
   LABELS,
   PAYMENT_METHOD_LIST,
   RECIPIENT_LIST,
+  type AvailabilityVisibilityKey,
   type BookingStatusKey,
   type CapacityLimits,
   type PaymentMethodKey,
@@ -76,7 +77,8 @@ interface AdminPanelViewProps {
   isSavingSettings: boolean;
   settingsSavedPulse: boolean;
   settingsSaveError: string;
-  onToggleShowAvailability: () => void;
+  onToggleAvailabilityItem: (key: AvailabilityVisibilityKey) => void;
+  onSetAllAvailabilityVisibility: (visible: boolean) => void;
   onToggleRegistrationClosed: () => void;
   visitorAnalytics: VisitorAnalyticsData;
   isRefreshingAnalytics: boolean;
@@ -117,7 +119,8 @@ export function AdminPanelView({
   isSavingSettings,
   settingsSavedPulse,
   settingsSaveError,
-  onToggleShowAvailability,
+  onToggleAvailabilityItem,
+  onSetAllAvailabilityVisibility,
   onToggleRegistrationClosed,
   visitorAnalytics,
   isRefreshingAnalytics,
@@ -568,7 +571,8 @@ export function AdminPanelView({
         savedPulse={settingsSavedPulse}
         saveError={settingsSaveError}
         isCloudConnected={isCloudConnected}
-        onToggleShowAvailability={onToggleShowAvailability}
+        onToggleAvailabilityItem={onToggleAvailabilityItem}
+        onSetAllAvailabilityVisibility={onSetAllAvailabilityVisibility}
         onToggleRegistrationClosed={onToggleRegistrationClosed}
       />
 

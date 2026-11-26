@@ -32,14 +32,36 @@ export interface RegistrationRecord {
 
 export type WhatsAppConfig = Record<RecipientKey, Record<PaymentMethodKey, string>>;
 
+export type AvailabilityVisibilityKey = BusKey | ColorGroupKey;
+
+export interface AvailabilityVisibility {
+  bus1: boolean;
+  bus2: boolean;
+  pink: boolean;
+  black: boolean;
+  yellow: boolean;
+  green: boolean;
+}
+
+export const DEFAULT_AVAILABILITY_VISIBILITY: AvailabilityVisibility = {
+  bus1: true,
+  bus2: true,
+  pink: true,
+  black: true,
+  yellow: true,
+  green: true,
+};
+
 export interface TripSettings {
   showAvailability: boolean;
   registrationClosed: boolean;
+  availabilityVisibility: AvailabilityVisibility;
 }
 
 export const DEFAULT_TRIP_SETTINGS: TripSettings = {
   showAvailability: true,
   registrationClosed: false,
+  availabilityVisibility: { ...DEFAULT_AVAILABILITY_VISIBILITY },
 };
 
 export interface DailyVisitRecord {
@@ -211,6 +233,61 @@ export const COLOR_GROUP_LIST: {
 export const RECIPIENT_LIST: { key: RecipientKey; label: string }[] = [
   { key: 'mekhail', label: 'ميخائيل إدور' },
   { key: 'fayez', label: 'فايز فيكتور' },
+];
+
+export type PaymentOptionId =
+  | 'instapay_mekhail'
+  | 'instapay_fayez'
+  | 'orange_mekhail'
+  | 'vf_fayez';
+
+export interface PaymentOptionItem {
+  id: PaymentOptionId;
+  method: PaymentMethodKey;
+  recipient: RecipientKey;
+  label: string;
+  enLabel: string;
+  recipientName: string;
+  defaultPhoneDisplay: string;
+}
+
+export const PAYMENT_OPTIONS: PaymentOptionItem[] = [
+  {
+    id: 'instapay_mekhail',
+    method: 'instapay',
+    recipient: 'mekhail',
+    label: 'إنستا باي',
+    enLabel: 'InstaPay',
+    recipientName: 'ميخائيل إدور',
+    defaultPhoneDisplay: `+20${MEKHAIL_PHONE_DIGITS}`,
+  },
+  {
+    id: 'instapay_fayez',
+    method: 'instapay',
+    recipient: 'fayez',
+    label: 'إنستا باي',
+    enLabel: 'InstaPay',
+    recipientName: 'فايز فيكتور',
+    defaultPhoneDisplay: `+20${FAYEZ_PHONE_DIGITS}`,
+  },
+  {
+    id: 'orange_mekhail',
+    method: 'orange',
+    recipient: 'mekhail',
+    label: 'أورانج كاش',
+    enLabel: 'Orange Cash',
+    recipientName: 'ميخائيل إدور',
+    defaultPhoneDisplay: `+20${MEKHAIL_PHONE_DIGITS}`,
+  },
+  {
+    id: 'vf_fayez',
+    method: 'vf',
+    recipient: 'fayez',
+    label: 'فودافون كاش',
+    enLabel: 'Vodafone Cash',
+    recipientName: 'فايز فيكتور',
+    defaultPhoneDisplay: `+20${FAYEZ_PHONE_DIGITS}`,
+  },
 ];
 
 export const PAYMENT_METHOD_LIST: { key: PaymentMethodKey; label: string; enLabel: string }[] = [

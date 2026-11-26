@@ -1,6 +1,7 @@
 import {
   BUS_CAPACITY,
   COLOR_GROUP_CAPACITY,
+  type AvailabilityVisibility,
   type CapacityLimits,
   type ColorGroupKey,
   type DailyVisitRecord,
@@ -13,11 +14,51 @@ import {
   type CapacityCounts,
 } from '../utils/validation';
 
-function normalizeSettings(raw?: Partial<TripSettings> | null): TripSettings | undefined {
+export function normalizeTripSettings(raw?: unknown): TripSettings | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  const fallbackShow = obj.showAvailability !== false;
+  const rawVis =
+    obj.availabilityVisibility && typeof obj.availabilityVisibility === 'object'
+      ? (obj.availabilityVisibility as Record<string, unknown>)
+      : null;
+
+  const pickBool = (primary: unknown, alias: unknown, fallback: boolean): boolean => {
+    if (typeof primary === 'boolean') return primary;
+    if (typeof alias === 'boolean') return alias;
+    return fallback;
+  };
+
+  const availabilityVisibility: AvailabilityVisibility = rawVis
+    ? {
+        bus1: pickBool(rawVis.bus1, undefined, fallbackShow),
+        bus2: pickBool(rawVis.bus2, undefined, fallbackShow),
+        pink: pickBool(rawVis.pink, rawVis.red, fallbackShow),
+        black: pickBool(rawVis.black, rawVis.blue, fallbackShow),
+        yellow: pickBool(rawVis.yellow, undefined, fallbackShow),
+        green: pickBool(rawVis.green, undefined, fallbackShow),
+      }
+    : {
+        bus1: fallbackShow,
+        bus2: fallbackShow,
+        pink: fallbackShow,
+        black: fallbackShow,
+        yellow: fallbackShow,
+        green: fallbackShow,
+      };
+
+  const anyVisible =
+    availabilityVisibility.bus1 ||
+    availabilityVisibility.bus2 ||
+    availabilityVisibility.pink ||
+    availabilityVisibility.black ||
+    availabilityVisibility.yellow ||
+    availabilityVisibility.green;
+
   return {
-    showAvailability: raw.showAvailability !== false,
-    registrationClosed: Boolean(raw.registrationClosed),
+    showAvailability: rawVis ? anyVisible : fallbackShow,
+    registrationClosed: Boolean(obj.registrationClosed),
+    availabilityVisibility,
   };
 }
 
@@ -187,7 +228,7 @@ function normalizeApiResponse<T extends SheetsApiResponse>(data: T): T {
       created: normalizeRegistrationRecord(data.data.created),
     };
   }
-  const normalizedSettings = normalizeSettings(data.settings);
+  const normalizedSettings = normalizeTripSettings(data.settings);
   if (normalizedSettings) {
     normalized.settings = normalizedSettings;
   }
@@ -478,6 +519,8 @@ export async function createRegistrationInSheets(
     {
       action: 'register',
       requestId,
+      recipient: record.recipient,
+      paymentMethod: record.paymentMethod,
       isTest: Boolean(extra?.isTest ?? record.isTest),
       secret: extra?.secret ?? '',
       registration: {
@@ -615,7 +658,7 @@ export async function approveAllTestInSheets(
 }
 
 /**
- * Updates live registration page controls (showAvailability & registrationClosed) immediately.
+ * Updates live registration page controls (showAvailability, registrationClosed, and per-item availabilityVisibility) immediately.
  * Sends POST with text/plain;charset=utf-8 header and JSON body.
  */
 export async function updateSettingsInSheets(
@@ -623,6 +666,7 @@ export async function updateSettingsInSheets(
   secret: string,
   settings: TripSettings
 ): Promise<RetryableApiResult> {
+  const vis = settings.availabilityVisibility;
   return postWithRetry(
     scriptUrl,
     {
@@ -630,6 +674,16 @@ export async function updateSettingsInSheets(
       secret,
       showAvailability: settings.showAvailability,
       registrationClosed: settings.registrationClosed,
+      availabilityVisibility: {
+        bus1: vis.bus1,
+        bus2: vis.bus2,
+        pink: vis.pink,
+        black: vis.black,
+        red: vis.pink,
+        blue: vis.black,
+        yellow: vis.yellow,
+        green: vis.green,
+      },
     },
     undefined,
     4

@@ -85,8 +85,10 @@ export const AdminFinancialCards = memo(function AdminFinancialCards({
               {PAYMENT_METHOD_LIST.map((pm) => {
                 const pStat = stats.byPayment[pm.key];
                 return (
-                  <div key={pm.key} className="flex items-center justify-between">
-                    <span>{pm.label}</span>
+                  <div key={pm.key} className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-[#3E3730]">
+                      {pm.key === 'instapay' ? `${pm.label} (${pm.enLabel})` : pm.label}
+                    </span>
                     <span className="font-mono-num text-[#1E1A16]">
                       {pStat.paid} / {pStat.expected} ج ({pStat.persons} فرد)
                     </span>

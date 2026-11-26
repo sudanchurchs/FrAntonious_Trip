@@ -19,14 +19,15 @@ import {
   BUS_LIST,
   COLOR_GROUP_CAPACITY,
   COLOR_GROUP_LIST,
+  DEFAULT_WHATSAPP_NUMBERS,
   LABELS,
-  PAYMENT_METHOD_LIST,
-  PAYMENT_RECIPIENT_MAP,
+  PAYMENT_OPTIONS,
   TICKET_PRICE,
+  type AvailabilityVisibility,
   type BusKey,
   type ColorGroupKey,
   type MemberRecord,
-  type PaymentMethodKey,
+  type PaymentOptionId,
   type RegistrationRecord,
   type WhatsAppConfig,
 } from '../types/trip';
@@ -91,7 +92,7 @@ interface BusSelectorGridProps {
   capacities: CapacityCounts;
   value: BusKey | '';
   clickedFullMessage: string;
-  showAvailability: boolean;
+  availabilityVisibility: AvailabilityVisibility;
   onSelect: (key: BusKey) => void;
   ariaLabel: string;
   compact?: boolean;
@@ -101,7 +102,7 @@ function BusSelectorGrid({
   capacities,
   value,
   clickedFullMessage,
-  showAvailability,
+  availabilityVisibility,
   onSelect,
   ariaLabel,
   compact = false,
@@ -120,7 +121,8 @@ function BusSelectorGrid({
           const fillPercent =
             busLimit > 0 ? Math.min(100, Math.round((stat.confirmed / busLimit) * 100)) : 100;
           const remainingWord = getArabicSeatWord(stat.remaining);
-          const showFullState = showAvailability && stat.isFull;
+          const isBusAvailabilityVisible = availabilityVisibility[bus.key];
+          const showFullState = isBusAvailabilityVisible && stat.isFull;
 
           return (
             <button
@@ -158,7 +160,7 @@ function BusSelectorGrid({
                   <span>{bus.label}</span>
                 </span>
 
-                {showAvailability &&
+                {isBusAvailabilityVisible &&
                   (stat.isFull ? (
                     <span className="text-xs font-extrabold text-red-700 whitespace-nowrap">
                       غير متاح
@@ -170,7 +172,7 @@ function BusSelectorGrid({
                   ))}
               </div>
 
-              {showAvailability && (
+              {isBusAvailabilityVisible && (
                 <>
                   <div className="flex w-full flex-wrap items-center justify-between gap-2 text-xs">
                     <span
@@ -227,7 +229,7 @@ interface ColorSelectorGridProps {
   capacities: CapacityCounts;
   value: ColorGroupKey | '';
   clickedFullMessage: string;
-  showAvailability: boolean;
+  availabilityVisibility: AvailabilityVisibility;
   onSelect: (key: ColorGroupKey) => void;
   ariaLabel: string;
   compact?: boolean;
@@ -237,7 +239,7 @@ function ColorSelectorGrid({
   capacities,
   value,
   clickedFullMessage,
-  showAvailability,
+  availabilityVisibility,
   onSelect,
   ariaLabel,
   compact = false,
@@ -257,7 +259,8 @@ function ColorSelectorGrid({
           const fillPercent =
             colorLimit > 0 ? Math.min(100, Math.round((stat.confirmed / colorLimit) * 100)) : 100;
           const remainingWord = getArabicSeatWord(stat.remaining);
-          const showFullState = showAvailability && stat.isFull;
+          const isColorAvailabilityVisible = availabilityVisibility[group.key];
+          const showFullState = isColorAvailabilityVisible && stat.isFull;
 
           return (
             <button
@@ -290,7 +293,7 @@ function ColorSelectorGrid({
                   </p>
                 </div>
 
-                {showAvailability &&
+                {isColorAvailabilityVisible &&
                   (stat.isFull ? (
                     <span className="text-xs font-extrabold text-red-700 whitespace-nowrap">
                       غير متاح
@@ -302,7 +305,7 @@ function ColorSelectorGrid({
                   ))}
               </div>
 
-              {showAvailability && (
+              {isColorAvailabilityVisible && (
                 <>
                   <div className="flex w-full flex-wrap items-center justify-between gap-2 text-xs">
                     <span
@@ -366,7 +369,7 @@ interface RegistrationViewProps {
   registrations: RegistrationRecord[];
   capacities: CapacityCounts;
   whatsappNumbers: WhatsAppConfig;
-  showAvailability: boolean;
+  availabilityVisibility: AvailabilityVisibility;
   registrationClosed: boolean;
   onSubmittingChange?: (submitting: boolean) => void;
   onRegistrationClosedDetected?: () => void;
@@ -381,7 +384,7 @@ export function RegistrationView({
   registrations,
   capacities,
   whatsappNumbers,
-  showAvailability,
+  availabilityVisibility,
   registrationClosed,
   onSubmittingChange,
   onRegistrationClosedDetected,
@@ -406,7 +409,7 @@ export function RegistrationView({
   const [colorGroup, setColorGroup] = useState<ColorGroupKey | ''>('');
   const [colorClickedFull, setColorClickedFull] = useState<string>('');
 
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodKey | ''>('');
+  const [selectedPaymentOptionId, setSelectedPaymentOptionId] = useState<PaymentOptionId | ''>('');
 
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -422,10 +425,16 @@ export function RegistrationView({
   const totalPersons = regType === 'group' ? 1 + companions.length : 1;
   const totalPrice = totalPersons * TICKET_PRICE;
 
-  const assignedRecipient = paymentMethod ? PAYMENT_RECIPIENT_MAP[paymentMethod] : null;
+  const selectedPaymentOption = useMemo(
+    () => PAYMENT_OPTIONS.find((opt) => opt.id === selectedPaymentOptionId) ?? null,
+    [selectedPaymentOptionId]
+  );
+  const paymentMethod = selectedPaymentOption?.method ?? '';
+  const assignedRecipient = selectedPaymentOption?.recipient ?? null;
   const assignedWhatsAppRaw =
-    paymentMethod && assignedRecipient
-      ? whatsappNumbers[assignedRecipient][paymentMethod]
+    selectedPaymentOption && assignedRecipient
+      ? whatsappNumbers[assignedRecipient]?.[selectedPaymentOption.method] ||
+        DEFAULT_WHATSAPP_NUMBERS[assignedRecipient][selectedPaymentOption.method]
       : '';
   const assignedWhatsAppDisplay = assignedWhatsAppRaw
     ? `+${assignedWhatsAppRaw.replace(/^\+/, '')}`
@@ -484,7 +493,7 @@ export function RegistrationView({
     totalPersons,
     busChoice,
     colorGroup,
-    paymentMethod,
+    selectedPaymentOptionId,
     fullName,
     phoneDigits,
     birthDate,
@@ -577,7 +586,7 @@ export function RegistrationView({
       const stat = capacities.buses[b.key];
       if (need > 0 && !stat.isFull && need > stat.remaining) {
         msgs.push(
-          showAvailability
+          availabilityVisibility[b.key]
             ? `لا يمكن تسجيل ${need} أفراد في ${b.label} — المتبقي حالياً ${stat.remaining} ${getArabicSeatWord(stat.remaining)} فقط. يرجى تغيير الباص لبعض الأفراد.`
             : `لا يمكن تسجيل ${need} أفراد في ${b.label} لعدم توفر مقاعد كافية حالياً. يرجى تغيير الباص لبعض الأفراد.`
         );
@@ -588,14 +597,14 @@ export function RegistrationView({
       const stat = capacities.colors[c.key];
       if (need > 0 && !stat.isFull && need > stat.remaining) {
         msgs.push(
-          showAvailability
+          availabilityVisibility[c.key]
             ? `لا يمكن تسجيل ${need} أفراد في قروب ${LABELS.colors[c.key]} — المتبقي حالياً ${stat.remaining} ${getArabicSeatWord(stat.remaining)} فقط. يرجى تغيير اللون لبعض الأفراد.`
             : `لا يمكن تسجيل ${need} أفراد في قروب ${LABELS.colors[c.key]} لعدم توفر مقاعد كافية حالياً. يرجى تغيير اللون لبعض الأفراد.`
         );
       }
     }
     return msgs;
-  }, [selectionDemand, capacities, showAvailability]);
+  }, [selectionDemand, capacities, availabilityVisibility]);
 
   const scrollToForm = () => {
     const formSection = document.getElementById('registration-form');
@@ -673,7 +682,7 @@ export function RegistrationView({
     setBusClickedFull('');
     setColorGroup('');
     setColorClickedFull('');
-    setPaymentMethod('');
+    setSelectedPaymentOptionId('');
     setSubmitAttempted(false);
     setRetryStatusText('');
     setFormError('');
@@ -1352,7 +1361,7 @@ export function RegistrationView({
                       capacities={capacities}
                       value={busChoice}
                       clickedFullMessage={busClickedFull}
-                      showAvailability={showAvailability}
+                      availabilityVisibility={availabilityVisibility}
                       onSelect={handleSelectBus}
                       ariaLabel="اختيار الباص للمشترك الرئيسي"
                       compact
@@ -1373,7 +1382,7 @@ export function RegistrationView({
                       capacities={capacities}
                       value={colorGroup}
                       clickedFullMessage={colorClickedFull}
-                      showAvailability={showAvailability}
+                      availabilityVisibility={availabilityVisibility}
                       onSelect={handleSelectColor}
                       ariaLabel="تحديد المجموعة اللونية للمشترك الرئيسي"
                       compact
@@ -1592,7 +1601,7 @@ export function RegistrationView({
                                 capacities={capacities}
                                 value={comp.bus}
                                 clickedFullMessage={comp.busClickedFull}
-                                showAvailability={showAvailability}
+                                availabilityVisibility={availabilityVisibility}
                                 onSelect={(bKey) => handleSelectCompanionBus(comp.keyId, bKey)}
                                 ariaLabel={`اختيار الباص للمرافق ${idx + 1}`}
                                 compact
@@ -1614,7 +1623,7 @@ export function RegistrationView({
                                 capacities={capacities}
                                 value={comp.colorGroup}
                                 clickedFullMessage={comp.colorClickedFull}
-                                showAvailability={showAvailability}
+                                availabilityVisibility={availabilityVisibility}
                                 onSelect={(cKey) => handleSelectCompanionColor(comp.keyId, cKey)}
                                 ariaLabel={`تحديد المجموعة اللونية للمرافق ${idx + 1}`}
                                 compact
@@ -1664,7 +1673,7 @@ export function RegistrationView({
                       capacities={capacities}
                       value={busChoice}
                       clickedFullMessage={busClickedFull}
-                      showAvailability={showAvailability}
+                      availabilityVisibility={availabilityVisibility}
                       onSelect={handleSelectBus}
                       ariaLabel="اختيار الباص"
                     />
@@ -1686,7 +1695,7 @@ export function RegistrationView({
                       capacities={capacities}
                       value={colorGroup}
                       clickedFullMessage={colorClickedFull}
-                      showAvailability={showAvailability}
+                      availabilityVisibility={availabilityVisibility}
                       onSelect={handleSelectColor}
                       ariaLabel="تحديد المجموعة اللونية"
                     />
@@ -1709,7 +1718,7 @@ export function RegistrationView({
               </div>
             )}
 
-            {/* Payment Method with Icons & Automatic Organizer Assignment */}
+            {/* Payment Method with Icons & Explicit Organizer Account Cards */}
             <div className="mt-8 border-t border-[#ECE6DC] pt-7">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <h3 className="font-display text-lg font-bold text-[#1E1A16]">
@@ -1719,33 +1728,45 @@ export function RegistrationView({
               </div>
 
               <div
-                className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3"
+                className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2"
                 role="radiogroup"
                 aria-label="طريقة الدفع"
               >
-                {PAYMENT_METHOD_LIST.map((pm) => {
-                  const isSelected = paymentMethod === pm.key;
-                  const pmRecipient = LABELS.recipients[PAYMENT_RECIPIENT_MAP[pm.key]];
+                {PAYMENT_OPTIONS.map((option) => {
+                  const isSelected = selectedPaymentOptionId === option.id;
+                  const rawPhone =
+                    whatsappNumbers[option.recipient]?.[option.method] ||
+                    DEFAULT_WHATSAPP_NUMBERS[option.recipient][option.method];
+                  const formattedPhone = rawPhone
+                    ? `+${rawPhone.replace(/^\+/, '')}`
+                    : option.defaultPhoneDisplay;
 
                   return (
                     <button
-                      key={pm.key}
+                      key={option.id}
                       type="button"
                       role="radio"
                       aria-checked={isSelected}
-                      onClick={() => setPaymentMethod(pm.key)}
-                      className={`flex items-center gap-3 rounded-xl border p-3.5 text-right transition-colors cursor-pointer ${
+                      onClick={() => setSelectedPaymentOptionId(option.id)}
+                      className={`flex items-center gap-3.5 rounded-xl border p-3.5 text-right transition-colors cursor-pointer ${
                         isSelected
-                          ? 'border-[#9A5B25] bg-[#FAF4EC]'
+                          ? 'border-[#9A5B25] bg-[#FAF4EC] ring-1 ring-[#9A5B25]/25'
                           : 'border-[#E4DDD2] bg-white hover:border-[#C8BCAE]'
                       }`}
                     >
-                      <PaymentMethodIcon method={pm.key} className="h-11 w-11 shrink-0" />
-                      <div className="min-w-0">
-                        <p className="font-display text-sm font-bold text-[#1E1A16]">{pm.label}</p>
-                        <p className="text-[11px] text-[#6B6155]">{pm.enLabel}</p>
-                        <p className="mt-0.5 truncate text-[11px] font-semibold text-[#7C4518]">
-                          {pmRecipient}
+                      <PaymentMethodIcon method={option.method} className="h-11 w-11 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="font-display text-sm font-extrabold text-[#1E1A16]">
+                          {option.label} ({option.enLabel})
+                        </p>
+                        <p className="mt-1 text-xs font-semibold text-[#7C4518]">
+                          الاسم: {option.recipientName}
+                        </p>
+                        <p className="mt-0.5 text-xs text-[#4E463D]">
+                          رقم الهاتف:{' '}
+                          <span className="font-mono-num font-bold text-[#1E1A16]" dir="ltr">
+                            {formattedPhone}
+                          </span>
                         </p>
                       </div>
                     </button>
@@ -1760,7 +1781,7 @@ export function RegistrationView({
                     <div>
                       <p className="flex items-center gap-1.5 text-xs text-[#6B6155]">
                         <UserCheck className="h-3.5 w-3.5 text-[#9A5B25]" />
-                        <span>المسؤول عن استلام الاشتراك</span>
+                        <span>المسؤول عن استلام الاشتراك ({LABELS.payments[paymentMethod]})</span>
                       </p>
                       <p className="font-display text-base font-bold text-[#1E1A16]">
                         {LABELS.recipients[assignedRecipient]}

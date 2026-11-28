@@ -91,6 +91,8 @@ interface AdminPanelViewProps {
   settingsSaveError: string;
   onToggleAvailabilityItem: (key: AvailabilityVisibilityKey) => void;
   onSetAllAvailabilityVisibility: (visible: boolean) => void;
+  onToggleManualUnavailable: (key: AvailabilityVisibilityKey) => void;
+  onSetAllManualUnavailable: (unavailable: boolean) => void;
   onToggleRegistrationClosed: () => void;
   visitorAnalytics: VisitorAnalyticsData;
   isRefreshingAnalytics: boolean;
@@ -134,6 +136,8 @@ export function AdminPanelView({
   settingsSaveError,
   onToggleAvailabilityItem,
   onSetAllAvailabilityVisibility,
+  onToggleManualUnavailable,
+  onSetAllManualUnavailable,
   onToggleRegistrationClosed,
   visitorAnalytics,
   isRefreshingAnalytics,
@@ -188,6 +192,8 @@ export function AdminPanelView({
   const [showSettings, setShowSettings] = useState(false);
   const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
   const [showPdfModal, setShowPdfModal] = useState(false);
+  const [showExcelMenu, setShowExcelMenu] = useState(false);
+  const excelMenuRef = useRef<HTMLDivElement | null>(null);
   const [waDraft, setWaDraft] = useState<WhatsAppConfig>(whatsappNumbers);
   const [waSaved, setWaSaved] = useState(false);
 
@@ -199,7 +205,26 @@ export function AdminPanelView({
   const [pinFeedback, setPinFeedback] = useState('');
   const [linkCopied, setLinkCopied] = useState(false);
 
+  const canExportPhones = currentOrganizer === 'mekhail';
   const isCloudConnected = isValidGoogleScriptUrl(googleScriptUrl);
+
+  useEffect(() => {
+    if (!showExcelMenu) return;
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (excelMenuRef.current && !excelMenuRef.current.contains(event.target as Node)) {
+        setShowExcelMenu(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowExcelMenu(false);
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showExcelMenu]);
 
   const mekhailStats = useMemo(
     () => calculateFinancialStats(registrations, 'mekhail'),
@@ -491,9 +516,9 @@ export function AdminPanelView({
       setPinFeedback('الرمز السري يجب أن يكون 4 أرقام أو أحرف على الأقل');
       return;
     }
-    await saveAdminPin(clean);
+    await saveAdminPin(currentOrganizer, clean);
     setNewPin('');
-    setPinFeedback('تم تحديث الرمز السري للمنظمين بنجاح');
+    setPinFeedback(`تم تحديث الرمز السري الخاص بـ ${LABELS.recipients[currentOrganizer]} بنجاح`);
     setTimeout(() => setPinFeedback(''), 2500);
   };
 
@@ -583,30 +608,107 @@ export function AdminPanelView({
             <span>تصدير كشف PDF</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() =>
-              exportRegistrationsToExcel(
-                filteredRegistrations,
-                registrations,
-                exportFileSuffix,
-                capacityLimits,
-                { bus: filterBus, color: filterColor }
-              )
-            }
-            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-emerald-800 whitespace-nowrap cursor-pointer"
-          >
-            <FileSpreadsheet className="h-4 w-4" />
-            <span>تصدير Excel (.xlsx)</span>
-          </button>
+          {canExportPhones ? (
+            <div ref={excelMenuRef} className="relative inline-flex">
+              <button
+                type="button"
+                onClick={() =>
+                  exportRegistrationsToExcel(
+                    filteredRegistrations,
+                    registrations,
+                    exportFileSuffix,
+                    capacityLimits,
+                    { bus: filterBus, color: filterColor },
+                    { includePhones: true }
+                  )
+                }
+                className="inline-flex min-h-[40px] items-center gap-2 rounded-r-lg bg-emerald-700 px-3.5 py-2 text-xs font-bold text-white transition-colors hover:bg-emerald-800 whitespace-nowrap cursor-pointer"
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                <span>تصدير Excel (.xlsx)</span>
+              </button>
+              <button
+                type="button"
+                aria-label="خيارات تصدير Excel"
+                aria-expanded={showExcelMenu}
+                onClick={() => setShowExcelMenu((v) => !v)}
+                className="inline-flex min-h-[40px] items-center justify-center rounded-l-lg border-r border-emerald-600 bg-emerald-700 px-2 text-white transition-colors hover:bg-emerald-800 cursor-pointer"
+              >
+                <ChevronDown className="h-4 w-4" />
+              </button>
+              {showExcelMenu && (
+                <div className="absolute left-0 top-full z-30 mt-1.5 w-56 overflow-hidden rounded-lg border border-[#DFD7CA] bg-white py-1 shadow-lg">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowExcelMenu(false);
+                      exportRegistrationsToExcel(
+                        filteredRegistrations,
+                        registrations,
+                        exportFileSuffix,
+                        capacityLimits,
+                        { bus: filterBus, color: filterColor },
+                        { includePhones: true }
+                      );
+                    }}
+                    className="flex w-full items-center gap-2 px-3.5 py-2.5 text-right text-xs font-bold text-[#1E1A16] transition-colors hover:bg-[#F5F1E9] cursor-pointer"
+                  >
+                    <Phone className="h-3.5 w-3.5 text-emerald-700" />
+                    <span>تصدير Excel بأرقام الهواتف</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowExcelMenu(false);
+                      exportRegistrationsToExcel(
+                        filteredRegistrations,
+                        registrations,
+                        exportFileSuffix,
+                        capacityLimits,
+                        { bus: filterBus, color: filterColor },
+                        { includePhones: false }
+                      );
+                    }}
+                    className="flex w-full items-center gap-2 border-t border-[#EFEAE1] px-3.5 py-2.5 text-right text-xs font-semibold text-[#4E463D] transition-colors hover:bg-[#F5F1E9] cursor-pointer"
+                  >
+                    <FileSpreadsheet className="h-3.5 w-3.5 text-[#7C4518]" />
+                    <span>تصدير Excel بدون أرقام الهواتف</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() =>
+                exportRegistrationsToExcel(
+                  filteredRegistrations,
+                  registrations,
+                  exportFileSuffix,
+                  capacityLimits,
+                  { bus: filterBus, color: filterColor },
+                  { includePhones: false }
+                )
+              }
+              className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-emerald-800 whitespace-nowrap cursor-pointer"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              <span>تصدير Excel (.xlsx)</span>
+            </button>
+          )}
 
           <button
             type="button"
             onClick={() =>
-              exportRegistrationsToCSV(filteredRegistrations, exportFileSuffix, {
-                bus: filterBus,
-                color: filterColor,
-              })
+              exportRegistrationsToCSV(
+                filteredRegistrations,
+                exportFileSuffix,
+                {
+                  bus: filterBus,
+                  color: filterColor,
+                },
+                { includePhones: canExportPhones }
+              )
             }
             className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-[#D4CBBF] bg-white px-3.5 py-2 text-xs font-semibold text-[#1E1A16] transition-colors hover:bg-[#F5F1E9] whitespace-nowrap cursor-pointer"
           >
@@ -661,6 +763,8 @@ export function AdminPanelView({
         isCloudConnected={isCloudConnected}
         onToggleAvailabilityItem={onToggleAvailabilityItem}
         onSetAllAvailabilityVisibility={onSetAllAvailabilityVisibility}
+        onToggleManualUnavailable={onToggleManualUnavailable}
+        onSetAllManualUnavailable={onSetAllManualUnavailable}
         onToggleRegistrationClosed={onToggleRegistrationClosed}
       />
 
@@ -790,7 +894,7 @@ export function AdminPanelView({
             <div className="flex items-center gap-2">
               <KeyRound className="h-4 w-4 text-[#9A5B25]" />
               <h3 className="font-display text-sm font-bold text-[#1E1A16]">
-                تغيير الرمز السري لدخول المنظمين
+                تغيير الرمز السري الخاص بـ {LABELS.recipients[currentOrganizer]}
               </h3>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -869,7 +973,11 @@ export function AdminPanelView({
       />
 
       {/* Memoized Live Confirmed Capacity Board */}
-      <AdminCapacityBoard capacities={capacities} />
+      <AdminCapacityBoard
+        capacities={capacities}
+        manualUnavailable={tripSettings.manualUnavailable}
+        onToggleManualUnavailable={onToggleManualUnavailable}
+      />
 
       {/* Dynamic Bus & Color Group Capacity Controls */}
       <AdminCapacityControlCard
@@ -1256,6 +1364,7 @@ export function AdminPanelView({
       {/* Organized PDF Roster Export Modal */}
       <AdminPdfExportModal
         isOpen={showPdfModal}
+        canExportPhones={canExportPhones}
         allRegistrations={registrations}
         filteredRegistrations={filteredRegistrations}
         capacities={capacities}

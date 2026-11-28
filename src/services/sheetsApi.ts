@@ -6,6 +6,7 @@ import {
   type CapacityLimits,
   type ColorGroupKey,
   type DailyVisitRecord,
+  type ManualUnavailableMap,
   type RegistrationRecord,
   type TripSettings,
   type VisitorAnalyticsData,
@@ -48,6 +49,29 @@ export function normalizeTripSettings(raw?: unknown): TripSettings | undefined {
         green: fallbackShow,
       };
 
+  const rawManual =
+    obj.manualUnavailable && typeof obj.manualUnavailable === 'object'
+      ? (obj.manualUnavailable as Record<string, unknown>)
+      : null;
+
+  const manualUnavailable: ManualUnavailableMap = rawManual
+    ? {
+        bus1: pickBool(rawManual.bus1, undefined, false),
+        bus2: pickBool(rawManual.bus2, undefined, false),
+        pink: pickBool(rawManual.pink, rawManual.red, false),
+        black: pickBool(rawManual.black, rawManual.blue, false),
+        yellow: pickBool(rawManual.yellow, undefined, false),
+        green: pickBool(rawManual.green, undefined, false),
+      }
+    : {
+        bus1: false,
+        bus2: false,
+        pink: false,
+        black: false,
+        yellow: false,
+        green: false,
+      };
+
   const anyVisible =
     availabilityVisibility.bus1 ||
     availabilityVisibility.bus2 ||
@@ -60,6 +84,7 @@ export function normalizeTripSettings(raw?: unknown): TripSettings | undefined {
     showAvailability: rawVis ? anyVisible : fallbackShow,
     registrationClosed: Boolean(obj.registrationClosed),
     availabilityVisibility,
+    manualUnavailable,
   };
 }
 
@@ -668,6 +693,7 @@ export async function updateSettingsInSheets(
   settings: TripSettings
 ): Promise<RetryableApiResult> {
   const vis = settings.availabilityVisibility;
+  const manual = settings.manualUnavailable;
   return postWithRetry(
     scriptUrl,
     {
@@ -684,6 +710,16 @@ export async function updateSettingsInSheets(
         blue: vis.black,
         yellow: vis.yellow,
         green: vis.green,
+      },
+      manualUnavailable: {
+        bus1: manual.bus1,
+        bus2: manual.bus2,
+        pink: manual.pink,
+        black: manual.black,
+        red: manual.pink,
+        blue: manual.black,
+        yellow: manual.yellow,
+        green: manual.green,
       },
     },
     undefined,

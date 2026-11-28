@@ -23,6 +23,7 @@ const SHEET_ANALYTICS = 'إحصائيات_الزيارات';
 const PROP_LAST_SEQ = 'LAST_QUEUE_SEQ_NO';
 const PROP_SHOW_AVAILABILITY = 'TRIP_SHOW_AVAILABILITY';
 const PROP_AVAILABILITY_VISIBILITY = 'TRIP_AVAILABILITY_VISIBILITY';
+const PROP_MANUAL_UNAVAILABLE = 'TRIP_MANUAL_UNAVAILABLE';
 const PROP_REGISTRATION_CLOSED = 'TRIP_REGISTRATION_CLOSED';
 const PROP_BASELINE_UNIQUE = 'TRIP_BASELINE_UNIQUE';
 const PROP_BASELINE_TOTAL = 'TRIP_BASELINE_TOTAL';
@@ -297,11 +298,37 @@ function normalizeAvailabilityVisibility_(rawVis, fallbackShow) {
   };
 }
 
+function normalizeManualUnavailable_(rawMap) {
+  var src = rawMap && typeof rawMap === 'object' ? rawMap : null;
+  function pickBool(primary, alias) {
+    if (src && typeof src[primary] === 'boolean') return src[primary];
+    if (src && alias && typeof src[alias] === 'boolean') return src[alias];
+    return false;
+  }
+  var bus1 = pickBool('bus1', null);
+  var bus2 = pickBool('bus2', null);
+  var pink = pickBool('pink', 'red');
+  var black = pickBool('black', 'blue');
+  var yellow = pickBool('yellow', null);
+  var green = pickBool('green', null);
+  return {
+    bus1: bus1,
+    bus2: bus2,
+    pink: pink,
+    black: black,
+    red: pink,
+    blue: black,
+    yellow: yellow,
+    green: green,
+  };
+}
+
 function getTripSettings_() {
   var props = PropertiesService.getScriptProperties();
   var rawShow = props.getProperty(PROP_SHOW_AVAILABILITY);
   var rawClosed = props.getProperty(PROP_REGISTRATION_CLOSED);
   var rawVisStr = props.getProperty(PROP_AVAILABILITY_VISIBILITY);
+  var rawManualStr = props.getProperty(PROP_MANUAL_UNAVAILABLE);
   var fallbackShow = rawShow === null ? true : rawShow !== 'false';
 
   var parsedVis = null;
@@ -313,7 +340,17 @@ function getTripSettings_() {
     }
   }
 
+  var parsedManual = null;
+  if (rawManualStr) {
+    try {
+      parsedManual = JSON.parse(rawManualStr);
+    } catch (err) {
+      parsedManual = null;
+    }
+  }
+
   var availabilityVisibility = normalizeAvailabilityVisibility_(parsedVis, fallbackShow);
+  var manualUnavailable = normalizeManualUnavailable_(parsedManual);
   var anyVisible =
     availabilityVisibility.bus1 ||
     availabilityVisibility.bus2 ||
@@ -326,14 +363,16 @@ function getTripSettings_() {
     showAvailability: parsedVis ? anyVisible : fallbackShow,
     registrationClosed: rawClosed === 'true',
     availabilityVisibility: availabilityVisibility,
+    manualUnavailable: manualUnavailable,
   };
 }
 
-function saveTripSettings_(showAvailability, registrationClosed, availabilityVisibility) {
+function saveTripSettings_(showAvailability, registrationClosed, availabilityVisibility, manualUnavailable) {
   var props = PropertiesService.getScriptProperties();
   var cleanShow = showAvailability !== false;
   var cleanClosed = Boolean(registrationClosed);
   var vis = normalizeAvailabilityVisibility_(availabilityVisibility, cleanShow);
+  var manual = normalizeManualUnavailable_(manualUnavailable);
   var anyVisible =
     vis.bus1 || vis.bus2 || vis.pink || vis.black || vis.yellow || vis.green;
   var effectiveShow = availabilityVisibility ? anyVisible : cleanShow;
@@ -351,12 +390,23 @@ function saveTripSettings_(showAvailability, registrationClosed, availabilityVis
       yellow: vis.yellow,
       green: vis.green,
     }),
+    TRIP_MANUAL_UNAVAILABLE: JSON.stringify({
+      bus1: manual.bus1,
+      bus2: manual.bus2,
+      pink: manual.pink,
+      black: manual.black,
+      red: manual.pink,
+      blue: manual.black,
+      yellow: manual.yellow,
+      green: manual.green,
+    }),
   });
 
   return {
     showAvailability: effectiveShow,
     registrationClosed: cleanClosed,
     availabilityVisibility: vis,
+    manualUnavailable: manual,
   };
 }
 
@@ -937,7 +987,40 @@ function handleUpdateSettings_(payload) {
     nextVis = normalizeAvailabilityVisibility_(null, nextShow);
   }
 
-  var saved = saveTripSettings_(nextShow, nextClosed, nextVis);
+  var nextManual = current.manualUnavailable;
+  if (payload.manualUnavailable && typeof payload.manualUnavailable === 'object') {
+    var incManual = payload.manualUnavailable;
+    var curManual = current.manualUnavailable;
+    var mBus1 = typeof incManual.bus1 === 'boolean' ? incManual.bus1 : curManual.bus1;
+    var mBus2 = typeof incManual.bus2 === 'boolean' ? incManual.bus2 : curManual.bus2;
+    var mPink =
+      typeof incManual.pink === 'boolean'
+        ? incManual.pink
+        : typeof incManual.red === 'boolean'
+          ? incManual.red
+          : curManual.pink;
+    var mBlack =
+      typeof incManual.black === 'boolean'
+        ? incManual.black
+        : typeof incManual.blue === 'boolean'
+          ? incManual.blue
+          : curManual.black;
+    var mYellow = typeof incManual.yellow === 'boolean' ? incManual.yellow : curManual.yellow;
+    var mGreen = typeof incManual.green === 'boolean' ? incManual.green : curManual.green;
+
+    nextManual = {
+      bus1: mBus1,
+      bus2: mBus2,
+      pink: mPink,
+      black: mBlack,
+      red: mPink,
+      blue: mBlack,
+      yellow: mYellow,
+      green: mGreen,
+    };
+  }
+
+  var saved = saveTripSettings_(nextShow, nextClosed, nextVis, nextManual);
   return jsonOutput_({
     ok: true,
     success: true,
@@ -1302,7 +1385,8 @@ function handleCreate_(ss, sheet, payload) {
   }
 
   // حماية فورية: رفض أي تسجيل جديد للزوار إذا كان التسجيل مغلقاً من لوحة المنظمين
-  if (!isTest && getTripSettings_().registrationClosed) {
+  var liveTripSettings = getTripSettings_();
+  if (!isTest && liveTripSettings.registrationClosed) {
     return jsonOutput_({
       ok: false,
       success: false,
@@ -1477,11 +1561,21 @@ function handleCreate_(ss, sheet, payload) {
       needColors[memberColorKeys[nc]] = (needColors[memberColorKeys[nc]] || 0) + 1;
     }
 
+    var manualUnavailable = liveTripSettings.manualUnavailable || {};
+
     var busKeysToCheck = ['bus1', 'bus2'];
     for (var bi = 0; bi < busKeysToCheck.length; bi++) {
       var bKey = busKeysToCheck[bi];
       var bNeed = needBuses[bKey] || 0;
       if (bNeed === 0) continue;
+      if (manualUnavailable[bKey]) {
+        return jsonOutput_({
+          ok: false,
+          success: false,
+          retryable: false,
+          error: BUS_LABELS[bKey] + ' غير متاح حالياً للتسجيل.',
+        });
+      }
       var busLimit = limits.buses[bKey];
       var busConfirmed = caps.buses[bKey];
       var busRemaining = Math.max(0, busLimit - busConfirmed);
@@ -1490,7 +1584,7 @@ function handleCreate_(ss, sheet, payload) {
           ok: false,
           success: false,
           retryable: false,
-          error: 'البص اتملا — لا يمكن التسجيل في ' + BUS_LABELS[bKey] + '.',
+          error: BUS_LABELS[bKey] + ' غير متاح حالياً.',
         });
       }
       if (bNeed > busRemaining) {
@@ -1515,6 +1609,14 @@ function handleCreate_(ss, sheet, payload) {
       var cKey = colorKeysToCheck[ci];
       var cNeed = needColors[cKey] || 0;
       if (cNeed === 0) continue;
+      if (manualUnavailable[cKey]) {
+        return jsonOutput_({
+          ok: false,
+          success: false,
+          retryable: false,
+          error: 'قروب ' + COLOR_LABELS[cKey] + ' غير متاح حالياً للتسجيل.',
+        });
+      }
       var colorLimit = limits.colors[cKey];
       var colorConfirmed = caps.colors[cKey];
       var colorRemaining = Math.max(0, colorLimit - colorConfirmed);
@@ -1523,7 +1625,7 @@ function handleCreate_(ss, sheet, payload) {
           ok: false,
           success: false,
           retryable: false,
-          error: 'القروب اكتمل — لا يمكن التسجيل في قروب ' + COLOR_LABELS[cKey] + '.',
+          error: 'قروب ' + COLOR_LABELS[cKey] + ' غير متاح حالياً.',
         });
       }
       if (cNeed > colorRemaining) {

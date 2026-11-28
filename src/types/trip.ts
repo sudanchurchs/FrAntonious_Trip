@@ -52,16 +52,36 @@ export const DEFAULT_AVAILABILITY_VISIBILITY: AvailabilityVisibility = {
   green: true,
 };
 
+export interface ManualUnavailableMap {
+  bus1: boolean;
+  bus2: boolean;
+  pink: boolean;
+  black: boolean;
+  yellow: boolean;
+  green: boolean;
+}
+
+export const DEFAULT_MANUAL_UNAVAILABLE: ManualUnavailableMap = {
+  bus1: false,
+  bus2: false,
+  pink: false,
+  black: false,
+  yellow: false,
+  green: false,
+};
+
 export interface TripSettings {
   showAvailability: boolean;
   registrationClosed: boolean;
   availabilityVisibility: AvailabilityVisibility;
+  manualUnavailable: ManualUnavailableMap;
 }
 
 export const DEFAULT_TRIP_SETTINGS: TripSettings = {
   showAvailability: true,
   registrationClosed: false,
   availabilityVisibility: { ...DEFAULT_AVAILABILITY_VISIBILITY },
+  manualUnavailable: { ...DEFAULT_MANUAL_UNAVAILABLE },
 };
 
 export interface DailyVisitRecord {
@@ -130,7 +150,7 @@ export const CAPACITY_LIMITS_STORAGE_KEY = 'trip_capacity_limits_v1';
 export const VISITOR_COUNTED_STORAGE_KEY = 'trip_visitor_counted';
 export const ANALYTICS_STORAGE_KEY = 'trip_visitor_analytics_v1';
 export const WHATSAPP_STORAGE_KEY = 'trip_whatsapp_numbers_v2';
-export const ADMIN_PIN_HASH_KEY = 'trip_admin_pin_hash_v1';
+export const ADMIN_PIN_HASH_KEY = 'trip_admin_pin_hash_v2';
 export const ADMIN_SESSION_KEY = 'trip_admin_session_v1';
 export const ADMIN_STRESS_SECRET = 'THREEYOUTH_ANTHONY_2026_ADMIN';
 

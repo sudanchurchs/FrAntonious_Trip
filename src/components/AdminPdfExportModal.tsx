@@ -49,6 +49,7 @@ interface RosterSection {
 
 interface AdminPdfExportModalProps {
   isOpen: boolean;
+  canExportPhones: boolean;
   allRegistrations: RegistrationRecord[];
   filteredRegistrations: RegistrationRecord[];
   capacities: CapacityCounts;
@@ -70,6 +71,7 @@ const BUS_HEX_MAP: Record<BusKey, string> = {
 
 export function AdminPdfExportModal({
   isOpen,
+  canExportPhones,
   allRegistrations,
   filteredRegistrations,
   capacities,
@@ -79,9 +81,19 @@ export function AdminPdfExportModal({
   const [groupMode, setGroupMode] = useState<PdfGroupMode>('bus_then_color');
   const [statusScope, setStatusScope] = useState<PdfStatusScope>('active_only');
   const [dataScope, setDataScope] = useState<PdfDataScope>(hasActiveFilters ? 'filtered' : 'all');
-  const [includePhones, setIncludePhones] = useState(true);
+  const [includePhones, setIncludePhones] = useState(canExportPhones);
   const [includeCheckboxes, setIncludeCheckboxes] = useState(true);
   const [pageBreakBetweenSections, setPageBreakBetweenSections] = useState(true);
+
+  const showPhones = canExportPhones && includePhones;
+
+  useEffect(() => {
+    if (!canExportPhones) {
+      setIncludePhones(false);
+    } else if (isOpen) {
+      setIncludePhones(true);
+    }
+  }, [canExportPhones, isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -110,7 +122,7 @@ export function AdminPdfExportModal({
           seqNo: reg.seqNo,
           memberId: m.id,
           name: m.name,
-          phone: m.phone,
+          phone: canExportPhones ? m.phone : '',
           age: calculateAgeFromBirthDate(m.birthDate),
           isMain: m.isMain,
           paid: m.paid,
@@ -123,7 +135,7 @@ export function AdminPdfExportModal({
       }
     }
     return list;
-  }, [sourceRegs, statusScope]);
+  }, [sourceRegs, statusScope, canExportPhones]);
 
   const summaryCounts = useMemo(() => {
     let paid = 0;
@@ -372,7 +384,7 @@ export function AdminPdfExportModal({
                     <tr className="border-y border-[#CFC5B6] bg-[#F5F1E9] text-[11px] font-bold text-[#1E1A16]">
                       <th className="w-9 px-2 py-2 text-center">#</th>
                       <th className="px-2.5 py-2">الاسم الثلاثي</th>
-                      {includePhones && <th className="px-2 py-2">رقم الهاتف</th>}
+                      {showPhones && <th className="px-2 py-2">رقم الهاتف</th>}
                       <th className="w-12 px-2 py-2 text-center">العمر</th>
                       <th className="px-2 py-2">الباص</th>
                       <th className="px-2 py-2">القروب</th>
@@ -401,7 +413,7 @@ export function AdminPdfExportModal({
                             {row.name}
                           </span>
                         </td>
-                        {includePhones && (
+                        {showPhones && (
                           <td
                             className="px-2 py-1.5 font-mono-num text-[11px] text-[#4E463D] tabular-nums whitespace-nowrap"
                             dir="ltr"
@@ -563,15 +575,17 @@ export function AdminPdfExportModal({
             </div>
 
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2 pt-1 text-xs font-semibold text-[#4E463D] md:col-span-3">
-              <label className="inline-flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={includePhones}
-                  onChange={(e) => setIncludePhones(e.target.checked)}
-                  className="h-4 w-4 rounded border-[#D4CBBF] accent-[#9A5B25]"
-                />
-                <span>إظهار أرقام الهواتف</span>
-              </label>
+              {canExportPhones && (
+                <label className="inline-flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={includePhones}
+                    onChange={(e) => setIncludePhones(e.target.checked)}
+                    className="h-4 w-4 rounded border-[#D4CBBF] accent-[#9A5B25]"
+                  />
+                  <span>إظهار أرقام الهواتف</span>
+                </label>
+              )}
 
               <label className="inline-flex items-center gap-2 cursor-pointer">
                 <input

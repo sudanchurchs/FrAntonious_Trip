@@ -14,8 +14,10 @@ import {
   COLOR_GROUP_LIST,
   LABELS,
   PAYMENT_METHOD_LIST,
+  type AvailabilityVisibilityKey,
   type BusKey,
   type ColorGroupKey,
+  type ManualUnavailableMap,
   type MemberRecord,
   type RegistrationRecord,
 } from '../types/trip';
@@ -108,6 +110,8 @@ export const AdminFinancialCards = memo(function AdminFinancialCards({
 
 interface AdminCapacityBoardProps {
   capacities: CapacityCounts;
+  manualUnavailable: ManualUnavailableMap;
+  onToggleManualUnavailable: (key: AvailabilityVisibilityKey) => void;
 }
 
 const NEAR_CAPACITY_THRESHOLD_PCT = 80;
@@ -137,6 +141,8 @@ function getCapacityIndicator(confirmed: number, limit: number, isFull: boolean)
 
 export const AdminCapacityBoard = memo(function AdminCapacityBoard({
   capacities,
+  manualUnavailable,
+  onToggleManualUnavailable,
 }: AdminCapacityBoardProps) {
   const totalBusCap = capacities.buses.bus1.limit + capacities.buses.bus2.limit;
   const totalColorCap =
@@ -205,11 +211,12 @@ export const AdminCapacityBoard = memo(function AdminCapacityBoard({
         {BUS_LIST.map((bus) => {
           const stat = capacities.buses[bus.key];
           const ind = getCapacityIndicator(stat.confirmed, stat.limit, stat.isFull);
+          const isManualOff = Boolean(manualUnavailable[bus.key]);
           return (
             <div
               key={bus.key}
               className={`rounded-lg border p-4 transition-colors ${
-                ind.isWarning
+                ind.isWarning || isManualOff
                   ? 'border-red-300 bg-red-50/45'
                   : 'border-[#ECE6DC] bg-[#FAF8F4]'
               }`}
@@ -223,6 +230,11 @@ export const AdminCapacityBoard = memo(function AdminCapacityBoard({
                     {ind.isWarning && <AlertTriangle className="h-3 w-3 shrink-0" />}
                     <span>{ind.statusText}</span>
                   </span>
+                  {isManualOff && (
+                    <span className="inline-flex items-center rounded-md border border-red-300 bg-red-100 px-2 py-0.5 text-[10px] font-extrabold text-red-800">
+                      مغلق بالتسجيل
+                    </span>
+                  )}
                 </div>
                 <span
                   className={`font-mono-num text-xs font-bold tabular-nums ${
@@ -254,6 +266,44 @@ export const AdminCapacityBoard = memo(function AdminCapacityBoard({
                 بانتظار تأكيد الدفع:{' '}
                 <strong className="font-mono-num text-[#1E1A16]">{stat.pending} فرد</strong>
               </p>
+
+              <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#E6DFD3]/90 pt-2.5">
+                <div className="min-w-0">
+                  <span
+                    className={`block text-xs font-bold ${
+                      isManualOff ? 'text-red-800' : 'text-[#4E463D]'
+                    }`}
+                  >
+                    {isManualOff
+                      ? 'غير متاح في صفحة التسجيل (مفعّل)'
+                      : 'إظهار كـ «غير متاح» في صفحة التسجيل'}
+                  </span>
+                  <span className="block text-[10px] text-[#6B6155]">
+                    {isManualOff
+                      ? 'يظهر للزوار «غير متاح» فقط بدون أي أرقام مقاعد'
+                      : 'عند التفعيل يظهر «غير متاح» بدون أرقام أو مقاعد متبقية'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isManualOff}
+                  aria-label={`تفعيل حالة غير متاح لـ ${bus.label} في صفحة التسجيل`}
+                  onClick={() => onToggleManualUnavailable(bus.key)}
+                  dir="ltr"
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 cursor-pointer ${
+                    isManualOff
+                      ? 'border-red-700 bg-red-600'
+                      : 'border-[#C8BCAE] bg-[#D6CEC2]'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                      isManualOff ? 'translate-x-5.5' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
             </div>
           );
         })}
@@ -263,58 +313,90 @@ export const AdminCapacityBoard = memo(function AdminCapacityBoard({
         {COLOR_GROUP_LIST.map((group) => {
           const stat = capacities.colors[group.key];
           const ind = getCapacityIndicator(stat.confirmed, stat.limit, stat.isFull);
+          const isManualOff = Boolean(manualUnavailable[group.key]);
           return (
             <div
               key={group.key}
-              className={`rounded-lg border p-3.5 transition-colors ${
-                ind.isWarning
+              className={`flex flex-col justify-between rounded-lg border p-3.5 transition-colors ${
+                ind.isWarning || isManualOff
                   ? 'border-red-300 bg-red-50/45'
                   : 'border-[#ECE6DC] bg-[#FAF8F4]'
               }`}
             >
-              <div className="flex items-center justify-between gap-1.5 text-xs">
-                <span className="flex items-center gap-1.5 font-bold text-[#1E1A16]">
-                  <span className={`h-2.5 w-2.5 shrink-0 rounded-xs ${group.swatchClass}`} />
-                  <span>قروب {LABELS.colors[group.key]}</span>
-                </span>
-                <span
-                  className={`font-mono-num font-bold tabular-nums ${
-                    ind.isWarning ? 'text-red-700' : 'text-[#4E463D]'
-                  }`}
-                >
-                  {stat.confirmed}/{stat.limit}
-                </span>
+              <div>
+                <div className="flex items-center justify-between gap-1.5 text-xs">
+                  <span className="flex items-center gap-1.5 font-bold text-[#1E1A16]">
+                    <span className={`h-2.5 w-2.5 shrink-0 rounded-xs ${group.swatchClass}`} />
+                    <span>قروب {LABELS.colors[group.key]}</span>
+                  </span>
+                  <span
+                    className={`font-mono-num font-bold tabular-nums ${
+                      ind.isWarning ? 'text-red-700' : 'text-[#4E463D]'
+                    }`}
+                  >
+                    {stat.confirmed}/{stat.limit}
+                  </span>
+                </div>
+
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-1">
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono-num text-[10px] font-extrabold tabular-nums ${ind.badgeClass}`}
+                  >
+                    {ind.isWarning && <AlertTriangle className="h-2.5 w-2.5 shrink-0" />}
+                    <span>{ind.statusText}</span>
+                  </span>
+                  {stat.isFull && (
+                    <span className="text-[10px] font-extrabold text-red-700">القروب اكتمل</span>
+                  )}
+                </div>
+
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#E6DFD3]">
+                  <div
+                    className={`h-full transition-all duration-300 ${
+                      stat.isFull
+                        ? 'bg-red-600'
+                        : ind.isNearFull
+                          ? 'bg-red-500'
+                          : group.swatchClass
+                    }`}
+                    style={{
+                      width: `${ind.fillPct}%`,
+                    }}
+                  />
+                </div>
+                <p className="mt-1.5 text-[11px] text-[#6B6155] tabular-nums">
+                  متبقي {stat.remaining} · معلق {stat.pending}
+                </p>
               </div>
 
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-1">
+              <div className="mt-2.5 flex items-center justify-between gap-1.5 border-t border-[#E6DFD3]/90 pt-2">
                 <span
-                  className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono-num text-[10px] font-extrabold tabular-nums ${ind.badgeClass}`}
-                >
-                  {ind.isWarning && <AlertTriangle className="h-2.5 w-2.5 shrink-0" />}
-                  <span>{ind.statusText}</span>
-                </span>
-                {stat.isFull && (
-                  <span className="text-[10px] font-extrabold text-red-700">القروب اكتمل</span>
-                )}
-              </div>
-
-              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#E6DFD3]">
-                <div
-                  className={`h-full transition-all duration-300 ${
-                    stat.isFull
-                      ? 'bg-red-600'
-                      : ind.isNearFull
-                        ? 'bg-red-500'
-                        : group.swatchClass
+                  className={`text-[11px] font-bold leading-tight ${
+                    isManualOff ? 'text-red-800' : 'text-[#4E463D]'
                   }`}
-                  style={{
-                    width: `${ind.fillPct}%`,
-                  }}
-                />
+                >
+                  {isManualOff ? 'غير متاح (مغلق)' : 'جعله غير متاح'}
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isManualOff}
+                  aria-label={`تفعيل حالة غير متاح لقروب ${LABELS.colors[group.key]} في صفحة التسجيل`}
+                  onClick={() => onToggleManualUnavailable(group.key)}
+                  dir="ltr"
+                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 cursor-pointer ${
+                    isManualOff
+                      ? 'border-red-700 bg-red-600'
+                      : 'border-[#C8BCAE] bg-[#D6CEC2]'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                      isManualOff ? 'translate-x-4.5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
               </div>
-              <p className="mt-1.5 text-[11px] text-[#6B6155] tabular-nums">
-                متبقي {stat.remaining} · معلق {stat.pending}
-              </p>
             </div>
           );
         })}

@@ -216,7 +216,13 @@ export default function App() {
           prev.availabilityVisibility.pink === normalized.availabilityVisibility.pink &&
           prev.availabilityVisibility.black === normalized.availabilityVisibility.black &&
           prev.availabilityVisibility.yellow === normalized.availabilityVisibility.yellow &&
-          prev.availabilityVisibility.green === normalized.availabilityVisibility.green
+          prev.availabilityVisibility.green === normalized.availabilityVisibility.green &&
+          prev.manualUnavailable.bus1 === normalized.manualUnavailable.bus1 &&
+          prev.manualUnavailable.bus2 === normalized.manualUnavailable.bus2 &&
+          prev.manualUnavailable.pink === normalized.manualUnavailable.pink &&
+          prev.manualUnavailable.black === normalized.manualUnavailable.black &&
+          prev.manualUnavailable.yellow === normalized.manualUnavailable.yellow &&
+          prev.manualUnavailable.green === normalized.manualUnavailable.green
         ) {
           return prev;
         }
@@ -924,6 +930,39 @@ export default function App() {
     [handleUpdateTripSettings]
   );
 
+  const handleToggleManualUnavailable = useCallback(
+    (key: AvailabilityVisibilityKey) => {
+      const current = tripSettingsRef.current;
+      const nextManual = {
+        ...current.manualUnavailable,
+        [key]: !current.manualUnavailable[key],
+      };
+      void handleUpdateTripSettings({
+        ...current,
+        manualUnavailable: nextManual,
+      });
+    },
+    [handleUpdateTripSettings]
+  );
+
+  const handleSetAllManualUnavailable = useCallback(
+    (unavailable: boolean) => {
+      const current = tripSettingsRef.current;
+      void handleUpdateTripSettings({
+        ...current,
+        manualUnavailable: {
+          bus1: unavailable,
+          bus2: unavailable,
+          pink: unavailable,
+          black: unavailable,
+          yellow: unavailable,
+          green: unavailable,
+        },
+      });
+    },
+    [handleUpdateTripSettings]
+  );
+
   const handleToggleRegistrationClosed = useCallback(() => {
     const current = tripSettingsRef.current;
     void handleUpdateTripSettings({
@@ -1401,6 +1440,24 @@ export default function App() {
       };
     }
 
+    const currentManual = tripSettingsRef.current.manualUnavailable;
+    for (const m of record.members) {
+      const mBus = getMemberBus(m, record);
+      const mColor = getMemberColor(m, record);
+      if (currentManual[mBus]) {
+        return {
+          ok: false,
+          error: `${LABELS.buses[mBus]} غير متاح حالياً للتسجيل.`,
+        };
+      }
+      if (currentManual[mColor]) {
+        return {
+          ok: false,
+          error: `قروب ${LABELS.colors[mColor]} غير متاح حالياً للتسجيل.`,
+        };
+      }
+    }
+
     if (isCloudConnected) {
       mutationSeqRef.current += 1;
       postSyncMessage({ type: 'MUTATION_IN_FLIGHT', ts: Date.now() });
@@ -1873,6 +1930,7 @@ export default function App() {
             capacities={capacities}
             whatsappNumbers={whatsappNumbers}
             availabilityVisibility={tripSettings.availabilityVisibility}
+            manualUnavailable={tripSettings.manualUnavailable}
             registrationClosed={tripSettings.registrationClosed}
             onSubmittingChange={handlePublicSubmittingChange}
             onRegistrationClosedDetected={handleRegistrationClosedDetected}
@@ -1893,6 +1951,8 @@ export default function App() {
             settingsSaveError={settingsSaveError}
             onToggleAvailabilityItem={handleToggleAvailabilityItem}
             onSetAllAvailabilityVisibility={handleSetAllAvailabilityVisibility}
+            onToggleManualUnavailable={handleToggleManualUnavailable}
+            onSetAllManualUnavailable={handleSetAllManualUnavailable}
             onToggleRegistrationClosed={handleToggleRegistrationClosed}
             visitorAnalytics={visitorAnalytics}
             isRefreshingAnalytics={isRefreshingAnalytics}

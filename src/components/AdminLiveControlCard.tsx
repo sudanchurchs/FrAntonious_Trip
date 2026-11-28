@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  Ban,
   Bus,
   CheckCircle2,
   Eye,
@@ -26,6 +27,8 @@ interface AdminLiveControlCardProps {
   isCloudConnected: boolean;
   onToggleAvailabilityItem: (key: AvailabilityVisibilityKey) => void;
   onSetAllAvailabilityVisibility: (visible: boolean) => void;
+  onToggleManualUnavailable: (key: AvailabilityVisibilityKey) => void;
+  onSetAllManualUnavailable: (unavailable: boolean) => void;
   onToggleRegistrationClosed: () => void;
 }
 
@@ -37,6 +40,8 @@ export function AdminLiveControlCard({
   isCloudConnected,
   onToggleAvailabilityItem,
   onSetAllAvailabilityVisibility,
+  onToggleManualUnavailable,
+  onSetAllManualUnavailable,
   onToggleRegistrationClosed,
 }: AdminLiveControlCardProps) {
   const vis = settings.availabilityVisibility;
@@ -50,6 +55,18 @@ export function AdminLiveControlCard({
   ].filter(Boolean).length;
   const allVisible = visibleCount === 6;
   const allHidden = visibleCount === 0;
+
+  const manual = settings.manualUnavailable;
+  const manualClosedCount = [
+    manual.bus1,
+    manual.bus2,
+    manual.pink,
+    manual.black,
+    manual.yellow,
+    manual.green,
+  ].filter(Boolean).length;
+  const allManuallyClosed = manualClosedCount === 6;
+  const noneManuallyClosed = manualClosedCount === 0;
 
   return (
     <section
@@ -98,6 +115,185 @@ export function AdminLiveControlCard({
         </div>
       )}
 
+      {/* Independent Per-Bus & Per-Color Manual Unavailable Switches (Show ONLY "غير متاح" without numbers) */}
+      <div className="mt-4 rounded-xl border border-red-200/80 bg-red-50/30 p-4">
+        <div className="flex flex-col gap-3 border-b border-red-200/60 pb-3.5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Ban
+                className={`h-4 w-4 shrink-0 ${
+                  manualClosedCount > 0 ? 'text-red-700' : 'text-[#6B6155]'
+                }`}
+              />
+              <h3 className="font-display text-sm font-extrabold text-[#1E1A16]">
+                تفعيل «غير متاح» يدوياً لكل باص وقروب في صفحة التسجيل
+              </h3>
+              <span
+                className={`rounded-md border px-2 py-0.5 font-mono-num text-[11px] font-bold tabular-nums ${
+                  manualClosedCount > 0
+                    ? 'border-red-300 bg-red-100 text-red-900'
+                    : 'border-[#DFD5C7] bg-white text-[#4E463D]'
+                }`}
+              >
+                غير متاح {manualClosedCount} / 6
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-[#5C5349]">
+              عند تفعيل أي مفتاح يظهر الباص أو القروب اللوني في صفحة التسجيل كـ «غير متاح» فقط بدون
+              إظهار أي أرقام أو مقاعد متبقية ويُمنع اختياره.
+            </p>
+          </div>
+
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={noneManuallyClosed}
+              onClick={() => onSetAllManualUnavailable(false)}
+              className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-900 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap cursor-pointer"
+            >
+              <Unlock className="h-3.5 w-3.5" />
+              <span>فتح الكل</span>
+            </button>
+            <button
+              type="button"
+              disabled={allManuallyClosed}
+              onClick={() => onSetAllManualUnavailable(true)}
+              className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-800 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap cursor-pointer"
+            >
+              <Ban className="h-3.5 w-3.5" />
+              <span>جعل الكل غير متاح</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Buses Row (2 manual unavailable slider switches) */}
+        <div className="mt-3.5">
+          <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-[#4E463D]">
+            <Bus className="h-3.5 w-3.5 text-red-700" />
+            <span>الباصات</span>
+          </div>
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            {BUS_LIST.map((bus) => {
+              const isManualOff = manual[bus.key];
+              return (
+                <div
+                  key={bus.key}
+                  className={`flex items-center justify-between gap-3 rounded-lg border px-3.5 py-3 transition-colors ${
+                    isManualOff
+                      ? 'border-red-300 bg-red-50/80'
+                      : 'border-[#E4DDD2] bg-white'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <p className="font-display text-sm font-bold text-[#1E1A16]">{bus.label}</p>
+                    <p
+                      className={`mt-0.5 text-[11px] font-semibold ${
+                        isManualOff ? 'text-red-700' : 'text-emerald-700'
+                      }`}
+                    >
+                      {isManualOff
+                        ? 'يظهر «غير متاح» فقط بدون أرقام مقاعد'
+                        : 'مفتوح في التسجيل حسب السعة'}
+                    </p>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span
+                      className={`text-[11px] font-bold whitespace-nowrap ${
+                        isManualOff ? 'text-red-800' : 'text-[#6B6155]'
+                      }`}
+                    >
+                      {isManualOff ? 'غير متاح' : 'مفتوح'}
+                    </span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={isManualOff}
+                      aria-label={`جعل ${bus.label} غير متاح في صفحة التسجيل`}
+                      onClick={() => onToggleManualUnavailable(bus.key)}
+                      dir="ltr"
+                      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 cursor-pointer ${
+                        isManualOff
+                          ? 'border-red-700 bg-red-600'
+                          : 'border-[#C8BCAE] bg-[#D6CEC2]'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                          isManualOff ? 'translate-x-5.5' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Color Groups Row (4 manual unavailable slider switches) */}
+        <div className="mt-4">
+          <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-[#4E463D]">
+            <Palette className="h-3.5 w-3.5 text-red-700" />
+            <span>المجموعات اللونية</span>
+          </div>
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+            {COLOR_GROUP_LIST.map((group) => {
+              const isManualOff = manual[group.key];
+              return (
+                <div
+                  key={group.key}
+                  className={`flex items-center justify-between gap-2.5 rounded-lg border px-3.5 py-3 transition-colors ${
+                    isManualOff
+                      ? 'border-red-300 bg-red-50/80'
+                      : 'border-[#E4DDD2] bg-white'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`h-3 w-3 shrink-0 rounded-xs ${group.swatchClass}`}
+                        aria-hidden="true"
+                      />
+                      <p className="font-display text-sm font-bold text-[#1E1A16] truncate">
+                        قروب {LABELS.colors[group.key]}
+                      </p>
+                    </div>
+                    <p
+                      className={`mt-0.5 text-[11px] font-semibold ${
+                        isManualOff ? 'text-red-700' : 'text-emerald-700'
+                      }`}
+                    >
+                      {isManualOff ? 'غير متاح (ON)' : 'مفتوح (OFF)'}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={isManualOff}
+                    aria-label={`جعل قروب ${LABELS.colors[group.key]} غير متاح في صفحة التسجيل`}
+                    onClick={() => onToggleManualUnavailable(group.key)}
+                    dir="ltr"
+                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 cursor-pointer ${
+                      isManualOff
+                        ? 'border-red-700 bg-red-600'
+                        : 'border-[#C8BCAE] bg-[#D6CEC2]'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                        isManualOff ? 'translate-x-5.5' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
       {/* Independent Per-Bus & Per-Color Availability Visibility Controls */}
       <div className="mt-4 rounded-xl border border-[#E4DDD2] bg-[#FAF8F4] p-4">
         <div className="flex flex-col gap-3 border-b border-[#E8E1D6] pb-3.5 sm:flex-row sm:items-center sm:justify-between">
@@ -109,14 +305,14 @@ export function AdminLiveControlCard({
                 <EyeOff className="h-4 w-4 shrink-0 text-[#6B6155]" />
               )}
               <h3 className="font-display text-sm font-extrabold text-[#1E1A16]">
-                إظهار / إخفاء الإتاحة وعدد المقاعد المتبقية لكل باص وقروب بشكل مستقل
+                إظهار / إخفاء أرقام المقاعد المتبقية لكل باص وقروب بشكل مستقل
               </h3>
               <span className="rounded-md border border-[#DFD5C7] bg-white px-2 py-0.5 font-mono-num text-[11px] font-bold text-[#4E463D] tabular-nums">
                 ظاهر {visibleCount} / 6
               </span>
             </div>
             <p className="mt-1 text-xs text-[#5C5349]">
-              عند إيقاف أي باص أو قروب تختفي عنه شارات «متاح / غير متاح» وعدد المقاعد المتبقية فقط مع استمرار حماية السعة عند الامتلاء.
+              عند إيقاف أي باص أو قروب تختفي عنه أرقام المقاعد المتبقية مع بقاء إمكانية اختياره طالما لم يكتمل.
             </p>
           </div>
 
@@ -167,7 +363,7 @@ export function AdminLiveControlCard({
                         isOn ? 'text-emerald-700' : 'text-[#6B6155]'
                       }`}
                     >
-                      {isOn ? 'الإتاحة والمقاعد ظاهرة للزوار' : 'الإتاحة والمقاعد مخفية'}
+                      {isOn ? 'الإتاحة والمقاعد ظاهرة للزوار' : 'أرقام المقاعد مخفية'}
                     </p>
                   </div>
 

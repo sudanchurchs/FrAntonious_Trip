@@ -678,10 +678,13 @@ export function migrateLegacyRegistrations(rawList: unknown): RegistrationRecord
 export function exportRegistrationsToCSV(
   filtered: RegistrationRecord[],
   filenameSuffix: string,
-  memberFilters?: { bus?: 'all' | BusKey; color?: 'all' | ColorGroupKey }
+  memberFilters?: { bus?: 'all' | BusKey; color?: 'all' | ColorGroupKey },
+  options?: { includePhones?: boolean }
 ): void {
-  let csvContent =
-    '\uFEFFكود الحجز,الاسم,الهاتف,تاريخ الميلاد,العمر,الصفة,حالة الفرد,الباص,المجموعة,المستلم,طريقة الدفع,المبلغ المدفوع للفرد,التاريخ\n';
+  const includePhones = Boolean(options?.includePhones);
+  let csvContent = includePhones
+    ? '\uFEFFكود الحجز,الاسم,الهاتف,تاريخ الميلاد,العمر,الصفة,حالة الفرد,الباص,المجموعة,المستلم,طريقة الدفع,المبلغ المدفوع للفرد,التاريخ\n'
+    : '\uFEFFكود الحجز,الاسم,تاريخ الميلاد,العمر,الصفة,حالة الفرد,الباص,المجموعة,المستلم,طريقة الدفع,المبلغ المدفوع للفرد,التاريخ\n';
 
   const busFilter = memberFilters?.bus ?? 'all';
   const colorFilter = memberFilters?.color ?? 'all';
@@ -695,10 +698,10 @@ export function exportRegistrationsToCSV(
       const statusText = m.cancelled ? 'ملغي' : m.paid ? 'مدفوع' : 'لم يدفع';
       const paidAmount = !m.cancelled && m.paid ? TICKET_PRICE : 0;
       const mAge = calculateAgeFromBirthDate(m.birthDate);
-      const row = [
+      const rowValues = [
         r.id,
         m.name,
-        m.phone,
+        ...(includePhones ? [m.phone] : []),
         m.birthDate || '',
         mAge !== null ? mAge : '',
         m.isMain ? 'رئيسي' : 'مرافق',
@@ -709,7 +712,8 @@ export function exportRegistrationsToCSV(
         LABELS.payments[r.paymentMethod] || r.paymentMethod,
         paidAmount,
         r.timestamp,
-      ]
+      ];
+      const row = rowValues
         .map((val) => `"${String(val).replace(/"/g, '""')}"`)
         .join(',');
       csvContent += `${row}\r\n`;
@@ -886,8 +890,10 @@ export function exportRegistrationsToExcel(
   allRegistrations: RegistrationRecord[],
   filenameSuffix: string,
   limits: CapacityLimits = DEFAULT_CAPACITY_LIMITS,
-  memberFilters?: { bus?: 'all' | BusKey; color?: 'all' | ColorGroupKey }
+  memberFilters?: { bus?: 'all' | BusKey; color?: 'all' | ColorGroupKey },
+  options?: { includePhones?: boolean }
 ): void {
+  const includePhones = Boolean(options?.includePhones);
   const memberRows: Record<string, string | number>[] = [];
   const busFilter = memberFilters?.bus ?? 'all';
   const colorFilter = memberFilters?.color ?? 'all';
@@ -906,7 +912,7 @@ export function exportRegistrationsToExcel(
       memberRows.push({
         'كود الحجز': r.id,
         'الاسم الثلاثي': m.name,
-        'رقم الهاتف': m.phone,
+        ...(includePhones ? { 'رقم الهاتف': m.phone } : {}),
         'تاريخ الميلاد': m.birthDate || '—',
         العمر: mAge !== null ? mAge : '—',
         الصفة: m.isMain ? 'مشترك رئيسي' : 'مرافق',
@@ -931,7 +937,7 @@ export function exportRegistrationsToExcel(
   membersSheet['!cols'] = [
     { wch: 16 },
     { wch: 26 },
-    { wch: 18 },
+    ...(includePhones ? [{ wch: 18 }] : []),
     { wch: 14 },
     { wch: 10 },
     { wch: 14 },

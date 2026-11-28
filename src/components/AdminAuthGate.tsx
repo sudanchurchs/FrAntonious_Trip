@@ -8,8 +8,15 @@ import {
 } from '../types/trip';
 import { normalizeDigits } from '../utils/validation';
 
-// Default PIN for organizers (Mekhail Edwar & Fayez Victor): "332026"
-const DEFAULT_ADMIN_PIN = '332026';
+// Independent default PINs per organizer
+const DEFAULT_ORGANIZER_PINS: Record<RecipientKey, string> = {
+  mekhail: '011908',
+  fayez: '332026',
+};
+
+function getOrganizerPinStorageKey(organizer: RecipientKey): string {
+  return `${ADMIN_PIN_HASH_KEY}_${organizer}`;
+}
 
 export async function sha256Hex(value: string): Promise<string> {
   if (typeof crypto !== 'undefined' && crypto.subtle) {
@@ -28,19 +35,19 @@ export async function sha256Hex(value: string): Promise<string> {
   return String(hash);
 }
 
-export async function getStoredAdminPinHash(): Promise<string> {
+export async function getStoredAdminPinHash(organizer: RecipientKey): Promise<string> {
   try {
-    const stored = localStorage.getItem(ADMIN_PIN_HASH_KEY);
+    const stored = localStorage.getItem(getOrganizerPinStorageKey(organizer));
     if (stored) return stored;
   } catch {
     // ignore
   }
-  return sha256Hex(DEFAULT_ADMIN_PIN);
+  return sha256Hex(DEFAULT_ORGANIZER_PINS[organizer]);
 }
 
-export async function saveAdminPin(newPin: string): Promise<void> {
+export async function saveAdminPin(organizer: RecipientKey, newPin: string): Promise<void> {
   const hash = await sha256Hex(newPin);
-  localStorage.setItem(ADMIN_PIN_HASH_KEY, hash);
+  localStorage.setItem(getOrganizerPinStorageKey(organizer), hash);
 }
 
 interface AdminAuthGateProps {
@@ -79,7 +86,7 @@ export function AdminAuthGate({ onAuthenticated, onExitToPublic }: AdminAuthGate
 
     setIsVerifying(true);
     try {
-      const expectedHash = await getStoredAdminPinHash();
+      const expectedHash = await getStoredAdminPinHash(selectedOrganizer);
       const enteredHash = await sha256Hex(cleanPin);
 
       const phoneMatches =

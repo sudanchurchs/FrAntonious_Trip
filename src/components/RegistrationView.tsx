@@ -26,6 +26,7 @@ import {
   type AvailabilityVisibility,
   type BusKey,
   type ColorGroupKey,
+  type ManualUnavailableMap,
   type MemberRecord,
   type PaymentOptionId,
   type RegistrationRecord,
@@ -93,6 +94,7 @@ interface BusSelectorGridProps {
   value: BusKey | '';
   clickedFullMessage: string;
   availabilityVisibility: AvailabilityVisibility;
+  manualUnavailable: ManualUnavailableMap;
   onSelect: (key: BusKey) => void;
   ariaLabel: string;
   compact?: boolean;
@@ -103,6 +105,7 @@ function BusSelectorGrid({
   value,
   clickedFullMessage,
   availabilityVisibility,
+  manualUnavailable,
   onSelect,
   ariaLabel,
   compact = false,
@@ -122,7 +125,7 @@ function BusSelectorGrid({
             busLimit > 0 ? Math.min(100, Math.round((stat.confirmed / busLimit) * 100)) : 100;
           const remainingWord = getArabicSeatWord(stat.remaining);
           const isBusAvailabilityVisible = availabilityVisibility[bus.key];
-          const showFullState = isBusAvailabilityVisible && stat.isFull;
+          const isUnavailable = stat.isFull || Boolean(manualUnavailable[bus.key]);
 
           return (
             <button
@@ -130,11 +133,11 @@ function BusSelectorGrid({
               type="button"
               role="radio"
               aria-checked={isSelected}
-              aria-disabled={stat.isFull}
+              aria-disabled={isUnavailable}
               onClick={() => onSelect(bus.key)}
               className={`flex flex-col ${compact ? 'gap-2 p-3' : 'gap-2.5 p-4'} rounded-lg border text-right transition-colors ${
-                showFullState
-                  ? 'border-red-200 bg-red-50/50 text-[#7A6F64] cursor-not-allowed'
+                isUnavailable
+                  ? 'justify-center border-red-200 bg-red-50/50 text-[#7A6F64] cursor-not-allowed'
                   : isSelected
                     ? 'border-[#9A5B25] bg-[#FAF4EC] cursor-pointer'
                     : 'border-[#E4DDD2] bg-white hover:border-[#C8BCAE] cursor-pointer'
@@ -148,47 +151,42 @@ function BusSelectorGrid({
                 >
                   <span
                     className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
-                      showFullState
+                      isUnavailable
                         ? 'border-red-300 bg-red-100'
                         : isSelected
                           ? 'border-[#9A5B25] bg-[#9A5B25]'
                           : 'border-[#B9AFA2]'
                     }`}
                   >
-                    {isSelected && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                    {isSelected && !isUnavailable && (
+                      <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                    )}
                   </span>
                   <span>{bus.label}</span>
                 </span>
 
-                {isBusAvailabilityVisible &&
-                  (stat.isFull ? (
-                    <span className="text-xs font-extrabold text-red-700 whitespace-nowrap">
-                      غير متاح
-                    </span>
-                  ) : (
-                    <span className="text-xs font-semibold text-emerald-700 whitespace-nowrap">
-                      متاح
-                    </span>
-                  ))}
+                {isUnavailable ? (
+                  <span className="rounded-md border border-red-200 bg-red-100/80 px-2 py-0.5 text-xs font-extrabold text-red-700 whitespace-nowrap">
+                    غير متاح
+                  </span>
+                ) : isBusAvailabilityVisible ? (
+                  <span className="text-xs font-semibold text-emerald-700 whitespace-nowrap">
+                    متاح
+                  </span>
+                ) : null}
               </div>
 
-              {isBusAvailabilityVisible && (
+              {!isUnavailable && isBusAvailabilityVisible && (
                 <>
                   <div className="flex w-full flex-wrap items-center justify-between gap-2 text-xs">
                     <span
                       dir="ltr"
-                      className={`font-mono-num font-bold tabular-nums ${
-                        stat.isFull ? 'text-red-700' : 'text-[#7C4518]'
-                      }`}
+                      className="font-mono-num font-bold tabular-nums text-[#7C4518]"
                     >
                       ({stat.confirmed}/{busLimit})
                     </span>
-                    <span
-                      className={`font-semibold ${stat.isFull ? 'text-red-700' : 'text-[#4E463D]'}`}
-                    >
-                      {stat.isFull
-                        ? 'متبقي 0 مقعد · البص اتملا'
-                        : `متبقي ${stat.remaining} ${remainingWord}`}
+                    <span className="font-semibold text-[#4E463D]">
+                      متبقي {stat.remaining} {remainingWord}
                     </span>
                   </div>
 
@@ -205,7 +203,7 @@ function BusSelectorGrid({
                       width={fillPercent}
                       height="4"
                       rx="2"
-                      className={stat.isFull ? 'fill-red-600' : 'fill-[#9A5B25]'}
+                      className="fill-[#9A5B25]"
                     />
                   </svg>
                 </>
@@ -230,6 +228,7 @@ interface ColorSelectorGridProps {
   value: ColorGroupKey | '';
   clickedFullMessage: string;
   availabilityVisibility: AvailabilityVisibility;
+  manualUnavailable: ManualUnavailableMap;
   onSelect: (key: ColorGroupKey) => void;
   ariaLabel: string;
   compact?: boolean;
@@ -240,6 +239,7 @@ function ColorSelectorGrid({
   value,
   clickedFullMessage,
   availabilityVisibility,
+  manualUnavailable,
   onSelect,
   ariaLabel,
   compact = false,
@@ -260,7 +260,7 @@ function ColorSelectorGrid({
             colorLimit > 0 ? Math.min(100, Math.round((stat.confirmed / colorLimit) * 100)) : 100;
           const remainingWord = getArabicSeatWord(stat.remaining);
           const isColorAvailabilityVisible = availabilityVisibility[group.key];
-          const showFullState = isColorAvailabilityVisible && stat.isFull;
+          const isUnavailable = stat.isFull || Boolean(manualUnavailable[group.key]);
 
           return (
             <button
@@ -268,13 +268,13 @@ function ColorSelectorGrid({
               type="button"
               role="radio"
               aria-checked={isSelected}
-              aria-disabled={stat.isFull}
+              aria-disabled={isUnavailable}
               onClick={() => onSelect(group.key)}
               className={`flex flex-col ${
                 compact ? 'gap-1.5 px-3 py-2.5' : 'gap-2.5 px-4 py-3.5'
               } rounded-lg border text-right transition-colors ${
-                showFullState
-                  ? 'border-red-200 bg-red-50/50 cursor-not-allowed'
+                isUnavailable
+                  ? 'justify-center border-red-200 bg-red-50/50 cursor-not-allowed'
                   : isSelected
                     ? `${group.borderClass} ${group.softBgClass} cursor-pointer`
                     : 'border-[#E4DDD2] bg-white hover:border-[#C8BCAE] cursor-pointer'
@@ -284,7 +284,7 @@ function ColorSelectorGrid({
                 <div className="flex items-center gap-2.5">
                   <span
                     className={`h-3.5 w-3.5 shrink-0 rounded-sm ${group.swatchClass} ${
-                      showFullState ? 'opacity-50' : ''
+                      isUnavailable ? 'opacity-50' : ''
                     }`}
                     aria-hidden="true"
                   />
@@ -293,35 +293,28 @@ function ColorSelectorGrid({
                   </p>
                 </div>
 
-                {isColorAvailabilityVisible &&
-                  (stat.isFull ? (
-                    <span className="text-xs font-extrabold text-red-700 whitespace-nowrap">
-                      غير متاح
-                    </span>
-                  ) : (
-                    <span className="text-xs font-semibold text-emerald-700 whitespace-nowrap">
-                      متاح
-                    </span>
-                  ))}
+                {isUnavailable ? (
+                  <span className="rounded-md border border-red-200 bg-red-100/80 px-2 py-0.5 text-xs font-extrabold text-red-700 whitespace-nowrap">
+                    غير متاح
+                  </span>
+                ) : isColorAvailabilityVisible ? (
+                  <span className="text-xs font-semibold text-emerald-700 whitespace-nowrap">
+                    متاح
+                  </span>
+                ) : null}
               </div>
 
-              {isColorAvailabilityVisible && (
+              {!isUnavailable && isColorAvailabilityVisible && (
                 <>
                   <div className="flex w-full flex-wrap items-center justify-between gap-2 text-xs">
                     <span
                       dir="ltr"
-                      className={`font-mono-num font-bold tabular-nums ${
-                        stat.isFull ? 'text-red-700' : 'text-[#5C5349]'
-                      }`}
+                      className="font-mono-num font-bold tabular-nums text-[#5C5349]"
                     >
                       ({stat.confirmed}/{colorLimit})
                     </span>
-                    <span
-                      className={`font-semibold ${stat.isFull ? 'text-red-700' : 'text-[#4E463D]'}`}
-                    >
-                      {stat.isFull
-                        ? 'متبقي 0 مقعد · القروب اكتمل'
-                        : `متبقي ${stat.remaining} ${remainingWord}`}
+                    <span className="font-semibold text-[#4E463D]">
+                      متبقي {stat.remaining} {remainingWord}
                     </span>
                   </div>
 
@@ -338,7 +331,7 @@ function ColorSelectorGrid({
                       width={fillPercent}
                       height="4"
                       rx="2"
-                      className={stat.isFull ? 'fill-red-600' : group.fillClass}
+                      className={group.fillClass}
                     />
                   </svg>
                 </>
@@ -370,6 +363,7 @@ interface RegistrationViewProps {
   capacities: CapacityCounts;
   whatsappNumbers: WhatsAppConfig;
   availabilityVisibility: AvailabilityVisibility;
+  manualUnavailable: ManualUnavailableMap;
   registrationClosed: boolean;
   onSubmittingChange?: (submitting: boolean) => void;
   onRegistrationClosedDetected?: () => void;
@@ -385,6 +379,7 @@ export function RegistrationView({
   capacities,
   whatsappNumbers,
   availabilityVisibility,
+  manualUnavailable,
   registrationClosed,
   onSubmittingChange,
   onRegistrationClosedDetected,
@@ -445,18 +440,18 @@ export function RegistrationView({
   }, [isSubmitting, onSubmittingChange]);
 
   useEffect(() => {
-    if (busChoice && capacities.buses[busChoice].isFull) {
+    if (busChoice && (capacities.buses[busChoice].isFull || manualUnavailable[busChoice])) {
       setBusChoice('');
-      setBusClickedFull('البص اتملا — يرجى اختيار الباص الآخر المتاح');
+      setBusClickedFull('غير متاح حالياً — يرجى اختيار الباص الآخر المتاح');
     }
-  }, [capacities.buses, busChoice]);
+  }, [capacities.buses, manualUnavailable, busChoice]);
 
   useEffect(() => {
-    if (colorGroup && capacities.colors[colorGroup].isFull) {
+    if (colorGroup && (capacities.colors[colorGroup].isFull || manualUnavailable[colorGroup])) {
       setColorGroup('');
-      setColorClickedFull('القروب اتملا — يرجى اختيار قروب لوني آخر متاح');
+      setColorClickedFull('غير متاح حالياً — يرجى اختيار قروب لوني آخر متاح');
     }
-  }, [capacities.colors, colorGroup]);
+  }, [capacities.colors, manualUnavailable, colorGroup]);
 
   useEffect(() => {
     if (regType !== 'group') return;
@@ -464,27 +459,30 @@ export function RegistrationView({
       let changed = false;
       const next = prev.map((comp) => {
         let updated = comp;
-        if (comp.bus && capacities.buses[comp.bus].isFull) {
+        if (comp.bus && (capacities.buses[comp.bus].isFull || manualUnavailable[comp.bus])) {
           changed = true;
           updated = {
             ...updated,
             bus: '',
-            busClickedFull: 'البص اتملا — يرجى اختيار الباص الآخر المتاح',
+            busClickedFull: 'غير متاح حالياً — يرجى اختيار الباص الآخر المتاح',
           };
         }
-        if (comp.colorGroup && capacities.colors[comp.colorGroup].isFull) {
+        if (
+          comp.colorGroup &&
+          (capacities.colors[comp.colorGroup].isFull || manualUnavailable[comp.colorGroup])
+        ) {
           changed = true;
           updated = {
             ...updated,
             colorGroup: '',
-            colorClickedFull: 'القروب اتملا — يرجى اختيار قروب لوني آخر متاح',
+            colorClickedFull: 'غير متاح حالياً — يرجى اختيار قروب لوني آخر متاح',
           };
         }
         return updated;
       });
       return changed ? next : prev;
     });
-  }, [capacities, regType]);
+  }, [capacities, manualUnavailable, regType]);
 
   useEffect(() => {
     if (formError) setFormError('');
@@ -584,7 +582,8 @@ export function RegistrationView({
     for (const b of BUS_LIST) {
       const need = selectionDemand.buses[b.key];
       const stat = capacities.buses[b.key];
-      if (need > 0 && !stat.isFull && need > stat.remaining) {
+      const isUnavailable = stat.isFull || Boolean(manualUnavailable[b.key]);
+      if (need > 0 && !isUnavailable && need > stat.remaining) {
         msgs.push(
           availabilityVisibility[b.key]
             ? `لا يمكن تسجيل ${need} أفراد في ${b.label} — المتبقي حالياً ${stat.remaining} ${getArabicSeatWord(stat.remaining)} فقط. يرجى تغيير الباص لبعض الأفراد.`
@@ -595,7 +594,8 @@ export function RegistrationView({
     for (const c of COLOR_GROUP_LIST) {
       const need = selectionDemand.colors[c.key];
       const stat = capacities.colors[c.key];
-      if (need > 0 && !stat.isFull && need > stat.remaining) {
+      const isUnavailable = stat.isFull || Boolean(manualUnavailable[c.key]);
+      if (need > 0 && !isUnavailable && need > stat.remaining) {
         msgs.push(
           availabilityVisibility[c.key]
             ? `لا يمكن تسجيل ${need} أفراد في قروب ${LABELS.colors[c.key]} — المتبقي حالياً ${stat.remaining} ${getArabicSeatWord(stat.remaining)} فقط. يرجى تغيير اللون لبعض الأفراد.`
@@ -604,7 +604,7 @@ export function RegistrationView({
       }
     }
     return msgs;
-  }, [selectionDemand, capacities, availabilityVisibility]);
+  }, [selectionDemand, capacities, availabilityVisibility, manualUnavailable]);
 
   const scrollToForm = () => {
     const formSection = document.getElementById('registration-form');
@@ -633,8 +633,8 @@ export function RegistrationView({
 
   const handleSelectBus = (key: BusKey) => {
     const stat = capacities.buses[key];
-    if (stat.isFull) {
-      setBusClickedFull('البص اتملا');
+    if (stat.isFull || manualUnavailable[key]) {
+      setBusClickedFull('غير متاح حالياً');
       return;
     }
     setBusClickedFull('');
@@ -643,8 +643,8 @@ export function RegistrationView({
 
   const handleSelectColor = (key: ColorGroupKey) => {
     const stat = capacities.colors[key];
-    if (stat.isFull) {
-      setColorClickedFull('القروب اتملا');
+    if (stat.isFull || manualUnavailable[key]) {
+      setColorClickedFull('غير متاح حالياً');
       return;
     }
     setColorClickedFull('');
@@ -653,8 +653,8 @@ export function RegistrationView({
 
   const handleSelectCompanionBus = (keyId: string, key: BusKey) => {
     const stat = capacities.buses[key];
-    if (stat.isFull) {
-      updateCompanion(keyId, { busClickedFull: 'البص اتملا' });
+    if (stat.isFull || manualUnavailable[key]) {
+      updateCompanion(keyId, { busClickedFull: 'غير متاح حالياً' });
       return;
     }
     updateCompanion(keyId, { bus: key, busClickedFull: '' });
@@ -662,8 +662,8 @@ export function RegistrationView({
 
   const handleSelectCompanionColor = (keyId: string, key: ColorGroupKey) => {
     const stat = capacities.colors[key];
-    if (stat.isFull) {
-      updateCompanion(keyId, { colorClickedFull: 'القروب اتملا' });
+    if (stat.isFull || manualUnavailable[key]) {
+      updateCompanion(keyId, { colorClickedFull: 'غير متاح حالياً' });
       return;
     }
     updateCompanion(keyId, { colorGroup: key, colorClickedFull: '' });
@@ -724,9 +724,9 @@ export function RegistrationView({
     }
 
     const mainBusStat = capacities.buses[busChoice];
-    if (mainBusStat.isFull) {
-      setBusClickedFull('البص اتملا');
-      setFormError('البص اتملا — لا يمكن إتمام التسجيل في هذا الباص');
+    if (mainBusStat.isFull || manualUnavailable[busChoice]) {
+      setBusClickedFull('غير متاح حالياً');
+      setFormError(`${LABELS.buses[busChoice]} غير متاح حالياً — يرجى اختيار باص آخر`);
       return;
     }
 
@@ -740,9 +740,9 @@ export function RegistrationView({
     }
 
     const mainColorStat = capacities.colors[colorGroup];
-    if (mainColorStat.isFull) {
-      setColorClickedFull('القروب اتملا');
-      setFormError('القروب اتملا — لا يمكن إتمام التسجيل في هذا القروب');
+    if (mainColorStat.isFull || manualUnavailable[colorGroup]) {
+      setColorClickedFull('غير متاح حالياً');
+      setFormError(`قروب ${LABELS.colors[colorGroup]} غير متاح حالياً — يرجى اختيار قروب لوني آخر`);
       return;
     }
 
@@ -768,18 +768,18 @@ export function RegistrationView({
           setFormError(`المرافق ${i + 1}: يرجى اختيار الباص`);
           return;
         }
-        if (capacities.buses[comp.bus].isFull) {
-          updateCompanion(comp.keyId, { busClickedFull: 'البص اتملا' });
-          setFormError(`المرافق ${i + 1}: البص اتملا — يرجى اختيار الباص الآخر`);
+        if (capacities.buses[comp.bus].isFull || manualUnavailable[comp.bus]) {
+          updateCompanion(comp.keyId, { busClickedFull: 'غير متاح حالياً' });
+          setFormError(`المرافق ${i + 1}: ${LABELS.buses[comp.bus]} غير متاح حالياً — يرجى اختيار الباص الآخر`);
           return;
         }
         if (!comp.colorGroup) {
           setFormError(`المرافق ${i + 1}: يرجى اختيار القروب اللوني`);
           return;
         }
-        if (capacities.colors[comp.colorGroup].isFull) {
-          updateCompanion(comp.keyId, { colorClickedFull: 'القروب اتملا' });
-          setFormError(`المرافق ${i + 1}: القروب اتملا — يرجى اختيار قروب لوني آخر`);
+        if (capacities.colors[comp.colorGroup].isFull || manualUnavailable[comp.colorGroup]) {
+          updateCompanion(comp.keyId, { colorClickedFull: 'غير متاح حالياً' });
+          setFormError(`المرافق ${i + 1}: قروب ${LABELS.colors[comp.colorGroup]} غير متاح حالياً — يرجى اختيار قروب لوني آخر`);
           return;
         }
       }
@@ -1362,6 +1362,7 @@ export function RegistrationView({
                       value={busChoice}
                       clickedFullMessage={busClickedFull}
                       availabilityVisibility={availabilityVisibility}
+                      manualUnavailable={manualUnavailable}
                       onSelect={handleSelectBus}
                       ariaLabel="اختيار الباص للمشترك الرئيسي"
                       compact
@@ -1383,6 +1384,7 @@ export function RegistrationView({
                       value={colorGroup}
                       clickedFullMessage={colorClickedFull}
                       availabilityVisibility={availabilityVisibility}
+                      manualUnavailable={manualUnavailable}
                       onSelect={handleSelectColor}
                       ariaLabel="تحديد المجموعة اللونية للمشترك الرئيسي"
                       compact
@@ -1602,6 +1604,7 @@ export function RegistrationView({
                                 value={comp.bus}
                                 clickedFullMessage={comp.busClickedFull}
                                 availabilityVisibility={availabilityVisibility}
+                                manualUnavailable={manualUnavailable}
                                 onSelect={(bKey) => handleSelectCompanionBus(comp.keyId, bKey)}
                                 ariaLabel={`اختيار الباص للمرافق ${idx + 1}`}
                                 compact
@@ -1624,6 +1627,7 @@ export function RegistrationView({
                                 value={comp.colorGroup}
                                 clickedFullMessage={comp.colorClickedFull}
                                 availabilityVisibility={availabilityVisibility}
+                                manualUnavailable={manualUnavailable}
                                 onSelect={(cKey) => handleSelectCompanionColor(comp.keyId, cKey)}
                                 ariaLabel={`تحديد المجموعة اللونية للمرافق ${idx + 1}`}
                                 compact
@@ -1674,6 +1678,7 @@ export function RegistrationView({
                       value={busChoice}
                       clickedFullMessage={busClickedFull}
                       availabilityVisibility={availabilityVisibility}
+                      manualUnavailable={manualUnavailable}
                       onSelect={handleSelectBus}
                       ariaLabel="اختيار الباص"
                     />
@@ -1696,6 +1701,7 @@ export function RegistrationView({
                       value={colorGroup}
                       clickedFullMessage={colorClickedFull}
                       availabilityVisibility={availabilityVisibility}
+                      manualUnavailable={manualUnavailable}
                       onSelect={handleSelectColor}
                       ariaLabel="تحديد المجموعة اللونية"
                     />
